@@ -458,11 +458,11 @@ REQUIRED_CONFIG_FIELDS = [
 ]
 
 REQUIRED_DATASET_FILES = [
-    "input/collect.ini",
+    "collect.ini",
 ]
 
 REQUIRED_SRC_FILES = [
-    "input/collect.ini",
+    "collect.ini",
 ]
 
 # =============================================================================
