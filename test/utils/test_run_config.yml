@@ -1,0 +1,74 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# Test Run Configuration — Utils (Log Collector)
+# =============================================================================
+#
+# Configure which test suites to run, execution order, and marker filters.
+#
+# Usage:
+#   1. Edit this file to enable/disable suites and set markers
+#   2. Run: ./run_validation.sh --config
+#
+# Available suites (under fvt/):
+#   log_collector    — Full log collection: invoke, metadata, bundle, modes
+#   negative         — Error handling: missing sources, archive failure
+#
+# Available markers:
+#   sanity           — Baseline verification (must-pass)
+#   functional       — Functional verification
+#   nft              — Non-functional tests (performance, idempotency)
+# =============================================================================
+
+---
+
+# =============================================================================
+# Execution Options
+# =============================================================================
+skip_on_failure: false
+
+scenarios:
+
+  # =========================================================================
+  # log_collector — Full log collection tests
+  # =========================================================================
+  # Runs all collection, metadata, bundle, hash, and mode tests.
+  log_collector:
+    order: 1
+    run: true
+    command: "test"
+    suite: ""
+    marker: "sanity"
+
+  # =========================================================================
+  # negative — Error handling tests
+  # =========================================================================
+  # Runs missing source and archive failure error handling tests.
+  negative:
+    order: 10
+    run: true
+    command: "test"
+    suite: ""
+    marker: "sanity"
+
+  # =========================================================================
+  # nft — Non-functional tests (idempotency)
+  # =========================================================================
+  nft:
+    order: 20
+    run: false
+    command: "test"
+    suite: ""
+    marker: "nft"

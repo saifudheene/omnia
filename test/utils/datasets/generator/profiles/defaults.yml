@@ -1,0 +1,9 @@
+---
+# Default profile for utils (log collector) dataset generation
+description: "Default log collection settings"
+
+# Log collection mode
+collection_mode: "full"
+
+# Output directory
+output_root: "/opt/omnia/collector_logs"

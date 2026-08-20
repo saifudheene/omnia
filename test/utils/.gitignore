@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Credentials (NEVER commit)
+test_creds.yml
+.test_creds.key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Reports
+reports/
+*.html
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest
+.pytest_cache/
+htmlcov/
+
+# Setup artifacts
+.run_validation_rc
+
+# Datasets (generated)
+datasets/*/input/
+datasets/*/repo_manager_output/
+!datasets/generator/
+!datasets/README.md
