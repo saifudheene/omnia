@@ -13,113 +13,116 @@
 # limitations under the License.
 
 """
-Log Collector — Idempotency Test (Non-Functional)
+NFT — Collection Command Idempotency
 
-TC-I01: Collection Command Idempotency
+Verifies that running ``ansible-playbook collect.yml`` twice in
+succession produces bundles with identical log content (excluding
+timestamp-dependent metadata).
 
-Reference: TCASES-LOGEX-2026-001 (v1.0.0)
+Each run creates a new ``omnia_logs_<timestamp>/`` directory, so we
+compare the content checksums (excluding metadata.json) of the two
+bundles.
+
+Tests:
+    TC-I01  Collection Command Idempotency
 """
 
 import time
 
 import pytest
+from omnia_auto import TestLogger
 
-from library.functions import TestLogger
-from library.functions.log_collector_func import (
-    execute_log_collection,
-    verify_bundle_created,
-    verify_hash_in_output,
-    compare_bundle_contents,
-    cleanup_bundle,
-)
 from library.vars import TEST_CASES as TC
 from library.vars.common_vars import TEST_CONFIG
+from library.functions.log_collector_func import (
+    compare_bundle_contents,
+    execute_log_collection,
+    get_bundle_path,
+    verify_bundle_created,
+    verify_collection_started,
+)
 from library.messages import (
     TEST_LOG_MSGS as LOG,
     TEST_ASSERT_MSGS as ASSERT,
 )
 
 
+# ── TC-I01: Collection Command Idempotency ─────────────────────────────────
+
+@pytest.mark.order(12)
 @pytest.mark.nft
-@pytest.mark.order(20)
-def test_idempotency(host):
-    """
-    TC-I01: Collection Command Idempotency.
+class TestIdempotency:
+    """TC-I01 — Verify idempotent collection produces identical content."""
 
-    Verify collection command produces deterministic results on re-run.
+    def test_idempotency(self, host):
+        """
+        Run collection twice and compare bundle contents.
 
-    Steps:
-    1. Execute log collection command (first run)
-    2. Record bundle filename and SHA256
-    3. Wait 5 seconds
-    4. Execute log collection command (second run)
-    5. Verify bundle filenames are different (timestamps)
-    6. Compare bundle contents (excluding metadata timestamp)
-    7. Verify both bundles have same log files
-    """
-    tc = TC["idempotency"]
-    tl = TestLogger(tc["title"], tc["id"])
+        Steps:
+        1. Execute first collection run
+        2. Record first bundle path
+        3. Wait briefly for timestamp separation
+        4. Execute second collection run
+        5. Record second bundle path
+        6. Compare content checksums (excluding metadata.json)
+        """
+        tc = TC["idempotency"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    bundle1_path = None
-    bundle2_path = None
+        # ── Run 1 ──────────────────────────────────────────────────────
+        tl.check("Executing first collection run ...")
+        success1, output1, rc1 = execute_log_collection(host)
 
-    try:
-        # Step 1: First run
-        tl.check("Executing first collection run")
-        success1, output1, _ = execute_log_collection(host)
+        assert success1, ASSERT["idempotency_failed"].format(
+            checksum1="N/A", checksum2="N/A",
+            detail=f"First run failed (rc={rc1})"
+        )
+        assert verify_collection_started(output1), \
+            "First run did not start properly"
 
-        if not success1:
-            tl.failed("First collection run failed", ASSERT["assert_collection_started"])
-            pytest.fail(ASSERT["assert_collection_started"])
+        bundle1 = get_bundle_path(host)
+        assert bundle1, "First bundle not found"
+        tl.check(f"  Run 1 bundle: {bundle1}")
 
-        _, bundle1_path = verify_bundle_created(host)
-        verify_hash_in_output(output1)
+        # ── Wait ───────────────────────────────────────────────────────
+        wait = TEST_CONFIG["idempotency_wait_seconds"]
+        tl.check(f"Waiting {wait}s between runs ...")
+        time.sleep(wait)
 
-        tl.check(LOG["first_run_complete"])
+        # ── Run 2 ──────────────────────────────────────────────────────
+        tl.check("Executing second collection run ...")
+        success2, output2, rc2 = execute_log_collection(host)
 
-        # Step 3: Wait
-        tl.check(f"Waiting {TEST_CONFIG['idempotency_wait_seconds']} seconds")
-        time.sleep(TEST_CONFIG["idempotency_wait_seconds"])
+        assert success2, ASSERT["idempotency_failed"].format(
+            checksum1="N/A", checksum2="N/A",
+            detail=f"Second run failed (rc={rc2})"
+        )
 
-        # Step 4: Second run
-        tl.check("Executing second collection run")
-        success2, output2, _ = execute_log_collection(host)
+        bundle2 = get_bundle_path(host)
+        assert bundle2, "Second bundle not found"
+        tl.check(f"  Run 2 bundle: {bundle2}")
 
-        if not success2:
-            tl.failed("Second collection run failed", ASSERT["assert_collection_started"])
-            pytest.fail(ASSERT["assert_collection_started"])
+        # Bundles should be different files (different timestamps)
+        assert bundle1 != bundle2, \
+            "Both runs produced the same bundle path — timestamp not unique"
 
-        _, bundle2_path = verify_bundle_created(host)
-        verify_hash_in_output(output2)
-
-        tl.check(LOG["second_run_complete"])
-
-        # Step 5: Verify filenames differ
-        if bundle1_path == bundle2_path:
-            tl.failed(LOG["bundles_same_names"], ASSERT["assert_different_names"])
-            pytest.fail(ASSERT["assert_different_names"])
-
-        tl.check(LOG["bundles_different_names"])
-
-        # Step 6-7: Compare contents
-        identical, _, _ = compare_bundle_contents(
-            host, bundle1_path, bundle2_path
+        # ── Compare ────────────────────────────────────────────────────
+        tl.check("Comparing bundle contents ...")
+        identical, cs1, cs2 = compare_bundle_contents(
+            host, bundle1, bundle2
         )
 
         if identical:
-            tl.check(LOG["contents_identical"])
+            tl.passed(
+                LOG["idempotency_ok"],
+                f"Content checksums match: {cs1[:16]}..."
+            )
         else:
-            # Contents may differ slightly due to timestamp, log rotation, etc.
-            tl.check(LOG["contents_differ"])
-            tl.check("Note: Minor content differences expected due to timestamps")
-
-        tl.passed(
-            "Idempotency test completed",
-            "Two bundles created with different timestamps"
-        )
-
-    finally:
-        if bundle1_path:
-            cleanup_bundle(host, bundle1_path)
-        if bundle2_path:
-            cleanup_bundle(host, bundle2_path)
+            tl.failed(
+                LOG["idempotency_failed"],
+                f"Checksums differ: {cs1[:16]}... vs {cs2[:16]}..."
+            )
+            assert False, ASSERT["idempotency_failed"].format(
+                checksum1=cs1, checksum2=cs2,
+                detail="Bundle contents differ between consecutive runs"
+            )

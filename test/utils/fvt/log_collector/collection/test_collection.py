@@ -13,142 +13,184 @@
 # limitations under the License.
 
 """
-Log Collector — Collection Invocation and Source Collection Tests
+FVT — Log Collection Invocation & Source Collection
 
-TC-F01: One-Shot Collection Invocation
-TC-F02: Source Collection and Warning Accumulation
+Verifies that ``ansible-playbook playbooks/collect.yml`` reads the
+``collect.ini`` inventory, parses all functional groups, builds
+dynamic host entries, dispatches per-group log collection via SSH,
+and accumulates warnings for missing sources.
 
-Reference: TCASES-LOGEX-2026-001 (v1.0.0)
+Tests:
+    TC-F01  One-Shot Collection Invocation
+    TC-F02  Source Collection and Warning Accumulation
 """
 
 import pytest
+from omnia_auto import TestLogger
 
-from library.functions import TestLogger
+from library.vars import TEST_CASES as TC
 from library.functions.log_collector_func import (
     execute_log_collection,
+    parse_collect_ini,
+    verify_collect_ini_exists,
+    verify_collect_ini_sections,
+    verify_collect_ini_has_nodes,
     verify_collection_started,
+    verify_inventory_parsed,
     verify_workspace_created,
-    verify_bundle_created,
-    list_bundle_contents,
-    verify_warning_summary_in_output,
 )
-from library.vars import TEST_CASES as TC
 from library.messages import (
     TEST_LOG_MSGS as LOG,
     TEST_ASSERT_MSGS as ASSERT,
 )
 
 
-# Module-level storage for results shared between ordered tests
-_collection_result = {
-    "output": "",
-    "exit_code": 0,
-    "workspace": None,
-    "bundle": None,
-}
+# ── Fixtures ────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def collection_result(host):
+    """Run collect.yml once for the entire module; cache the result."""
+    success, output, rc = execute_log_collection(host, mode="full")
+    return {"success": success, "output": output, "rc": rc}
 
 
-@pytest.mark.sanity
+@pytest.fixture(scope="module")
+def parsed_inventory(host):
+    """Parse collect.ini and return the inventory dict."""
+    return parse_collect_ini(host)
+
+
+# ── TC-F01: One-Shot Collection Invocation ──────────────────────────────────
+
 @pytest.mark.order(1)
-def test_collection_invocation(host):
-    """
-    TC-F01: One-Shot Collection Invocation.
+@pytest.mark.functional
+class TestCollectionInvocation:
+    """TC-F01 — Verify one-shot collection invocation."""
 
-    Verify single command execution triggers collection pipeline
-    and prepares workspace successfully.
+    def test_collect_ini_exists(self, host):
+        """Verify collect.ini exists on the OIM server."""
+        tc = TC["collection_invocation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Execute one-shot log collection command inside omnia_core
-    2. Verify collection pipeline starts
-    3. Check workspace directory created
-    4. Verify runtime context resolved
-    """
-    tc = TC["collection_invocation"]
-    tl = TestLogger(tc["title"], tc["id"])
+        tl.check("Verifying collect.ini exists on OIM ...")
+        exists = verify_collect_ini_exists(host)
 
-    # Step 1: Execute log collection command
-    tl.check("Executing one-shot log collection command")
-    _, output, exit_code = execute_log_collection(host, mode="full")
+        if exists:
+            tl.passed(LOG["collection_started"], "collect.ini found")
+        else:
+            tl.failed(LOG["collection_failed"], "collect.ini not found")
+            assert False, ASSERT["collection_not_started"].format(
+                detail="collect.ini not found at expected path"
+            )
 
-    _collection_result["output"] = output
-    _collection_result["exit_code"] = exit_code
+    def test_collect_ini_sections(self, host, parsed_inventory):
+        """Verify collect.ini contains all expected functional group sections."""
+        tc = TC["collection_invocation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    # Step 2: Verify collection started
-    if not verify_collection_started(output):
-        tl.failed(LOG["collection_failed_start"], ASSERT["assert_collection_started"])
-        pytest.fail(ASSERT["assert_collection_started"])
+        tl.check("Verifying collect.ini sections ...")
+        all_present, missing = verify_collect_ini_sections(parsed_inventory)
 
-    tl.check(LOG["collection_started"])
+        if all_present:
+            tl.passed(LOG["collection_started"],
+                      f"All {len(parsed_inventory)} sections present")
+        else:
+            tl.failed(LOG["collection_failed"],
+                      f"Missing sections: {missing}")
+            assert False, ASSERT["collection_not_started"].format(
+                detail=f"Missing INI sections: {missing}"
+            )
 
-    # Step 3: Check workspace directory created
-    workspace_exists, workspace_path = verify_workspace_created(host)
+    def test_collect_ini_has_nodes(self, host, parsed_inventory):
+        """Verify at least one section has node IPs defined."""
+        tc = TC["collection_invocation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    if not workspace_exists:
-        tl.failed(LOG["workspace_not_created"], ASSERT["assert_workspace_created"])
-        pytest.fail(ASSERT["assert_workspace_created"])
+        tl.check("Verifying collect.ini has populated groups ...")
+        has_nodes, counts = verify_collect_ini_has_nodes(parsed_inventory)
 
-    _collection_result["workspace"] = workspace_path
-    tl.check(LOG["workspace_created"].format(workspace=workspace_path))
+        if has_nodes:
+            populated = {k: v for k, v in counts.items() if v > 0}
+            tl.passed(LOG["collection_started"],
+                      f"Groups with nodes: {populated}")
+        else:
+            tl.failed(LOG["collection_failed"], "No nodes in any group")
+            assert False, ASSERT["collection_not_started"].format(
+                detail="collect.ini has no node IPs in any section"
+            )
 
-    # Step 4: Verify runtime context resolved
-    tl.check(LOG["runtime_context_resolved"].format(node_count="N"))
+    def test_playbook_execution(self, host, collection_result):
+        """Verify ansible-playbook collect.yml executes successfully."""
+        tc = TC["collection_invocation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    tl.passed(
-        "Collection invocation successful",
-        f"Workspace created at {workspace_path}"
-    )
+        tl.check("Verifying playbook execution ...")
+        output = collection_result["output"]
+        started = verify_collection_started(output)
+
+        if collection_result["success"] and started:
+            tl.passed(LOG["collection_started"], "Playbook completed")
+        else:
+            tl.failed(LOG["collection_failed"],
+                      f"rc={collection_result['rc']}")
+            assert False, ASSERT["collection_not_started"].format(
+                detail=f"Playbook exit code: {collection_result['rc']}"
+            )
+
+    def test_inventory_parsed(self, host, collection_result):
+        """Verify the INI inventory was parsed during playbook execution."""
+        tc = TC["collection_invocation"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Verifying INI inventory parsing in output ...")
+        parsed = verify_inventory_parsed(collection_result["output"])
+
+        if parsed:
+            tl.passed(LOG["collection_started"], "INI parsed")
+        else:
+            tl.failed(LOG["collection_failed"], "INI parse not found in output")
+            assert False, ASSERT["collection_not_started"].format(
+                detail="'Parse INI inventory file' task not found in output"
+            )
 
 
-@pytest.mark.sanity
+# ── TC-F02: Source Collection and Warning Accumulation ──────────────────────
+
 @pytest.mark.order(2)
-def test_source_collection(host):
-    """
-    TC-F02: Source Collection and Warning Accumulation.
+@pytest.mark.functional
+class TestSourceCollection:
+    """TC-F02 — Verify source collection and warning accumulation."""
 
-    Verify collection from Kubernetes and Slurm sources completes
-    with all available logs gathered.
+    def test_workspace_created(self, host, collection_result):
+        """Verify workspace directory was created after collection."""
+        tc = TC["source_collection"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Verify bundle created from collected logs
-    2. Check collected data in workspace
-    3. Verify source iteration completes
-    4. Check for any warnings in output
-    """
-    tc = TC["source_collection"]
-    tl = TestLogger(tc["title"], tc["id"])
+        tl.check("Verifying workspace directory created ...")
+        exists, workspace = verify_workspace_created(host)
 
-    workspace_path = _collection_result.get("workspace")
-    if not workspace_path:
-        tl.skipped("Workspace not available", "TC-F01 must pass first")
-        pytest.skip("TC-F01 must pass first")
+        if exists:
+            tl.passed(LOG["source_collected"], f"Workspace: {workspace}")
+        else:
+            tl.failed(LOG["source_failed"], "No workspace directory found")
+            assert False, ASSERT["source_not_collected"].format(
+                detail="Workspace directory not created after collection"
+            )
 
-    # Step 1: Verify bundle created
-    bundle_exists, bundle_path = verify_bundle_created(host)
+    def test_warning_count_in_output(self, host, collection_result):
+        """Verify warning count appears in completion summary."""
+        tc = TC["source_collection"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    if not bundle_exists:
-        tl.failed(LOG["bundle_not_created"], ASSERT["assert_bundle_created"])
-        pytest.fail(ASSERT["assert_bundle_created"])
-
-    _collection_result["bundle"] = bundle_path
-
-    # Step 2: Check collected data
-    contents = list_bundle_contents(host, bundle_path)
-
-    if not contents:
-        tl.failed("No contents in bundle", ASSERT["assert_sources_complete"])
-        pytest.fail(ASSERT["assert_sources_complete"])
-
-    tl.check(f"Bundle contains {len(contents)} files/directories")
-
-    # Step 3-4: Verify iteration complete and check warnings
-    output = _collection_result.get("output", "")
-    has_warnings, warning_count = verify_warning_summary_in_output(output)
-
-    if has_warnings:
-        tl.check(LOG["warnings_recorded"].format(count=warning_count))
-
-    tl.check(LOG["source_iteration_complete"])
-    tl.passed(
-        "Source collection completed",
-        f"Collected data from cluster nodes, {len(contents)} items in bundle"
-    )
+        tl.check("Checking warning count in output ...")
+        output = collection_result["output"]
+        # The completion summary prints "Warnings : <N>"
+        if "Warnings" in output or "OMNIA LOG COLLECTION COMPLETE" in output:
+            tl.passed(LOG["source_collected"],
+                      "Warning summary present in output")
+        else:
+            tl.failed(LOG["source_failed"],
+                      "No completion summary in output")
+            assert False, ASSERT["source_not_collected"].format(
+                detail="Completion summary block not found in output"
+            )

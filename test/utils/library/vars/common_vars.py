@@ -15,11 +15,11 @@
 """
 Utils — Module-Specific Variables
 
-Common vars (ssh_opts, config names, timeouts) live in the
-``omnia_auto`` package and are set via ``omnia_auto.configure()``
-in conftest.py.
+Constants aligned with the developer implementation in
+``src/utils/roles/log_collector/`` and ``src/utils/playbooks/collect.yml``.
 
-Only module-specific constants remain here.
+The playbook reads ``collect.ini`` (INI format with functional groups)
+and dispatches log collection to nodes per group.
 
 Reference Specs:
 - BSPEC-LOGEX-2026-001 (Behavior Specification)
@@ -28,7 +28,7 @@ Reference Specs:
 
 import os
 import re
-from typing import Dict
+from typing import Dict, List
 
 # =============================================================================
 # DIRECTORY PATHS
@@ -62,35 +62,128 @@ ENV_OMNIA_DATA_PATH = "OMNIA_DATA_PATH"
 ENV_OMNIA_PROJECT_NAME = "OMNIA_PROJECT_NAME"
 
 # =============================================================================
-# PLAYBOOK CONFIGURATION (module-specific)
+# PLAYBOOK CONFIGURATION (aligned with src/utils/playbooks/collect.yml)
 # =============================================================================
 
-# Playbook entry point (relative to playbooks/)
+# Playbook entry point (relative to src/utils/)
 PLAYBOOK_ENTRY_POINT = "collect.yml"
-PLAYBOOK_WORKDIR = "src/utils/playbooks"
+PLAYBOOK_WORKDIR = "src/utils"
 
-# Valid playbook tags
+# Valid playbook tags (from collect.yml plays)
 PLAYBOOK_TAGS = [
-    "collect",
+    "setup",
+    "prepare",
+    "k8s",
+    "slurm",
+    "bundle",
+    "curated_support",
+    "always",
+]
+
+# Playbook stages dispatched via the 'stage' variable
+PLAYBOOK_STAGES = [
+    "setup",
+    "prepare",
+    "k8s_master",
+    "k8s_worker",
+    "slurm_ctl",
+    "slurm_node",
+    "login_node",
+    "login_compiler_node",
+    "bundle",
 ]
 
 # =============================================================================
-# COMMAND CONFIGURATION (inside omnia_core container)
+# COLLECT.INI — NODE INVENTORY (aligned with src/utils/input/collect.ini)
 # =============================================================================
 
-# Default mode (full collection scope)
+# Path to the INI inventory file on the OIM server
+COLLECT_INI_PATH = "/opt/omnia/utils/input/project_default/collect.ini"
+
+# Source INI file in the repo (before omnia.sh --init copies it)
+COLLECT_INI_SRC = os.path.join(SRC_INPUT_DIR, "collect.ini")
+
+# Supported functional group sections in collect.ini
+# These map to the [section_name] entries in the INI file
+COLLECT_INI_SECTIONS = [
+    "slurm_control_node",
+    "slurm_node",
+    "k8s_control_node",
+    "k8s_worker_node",
+    "login_node",
+    "login_compiler_node",
+]
+
+# Mapping: INI section -> Ansible dynamic host group name (from prepare.yml)
+INI_SECTION_TO_GROUP = {
+    "slurm_control_node": "slurm_controllers",
+    "slurm_node": "slurm_nodes",
+    "k8s_control_node": "k8s_masters",
+    "k8s_worker_node": "k8s_workers",
+    "login_node": "login_nodes",
+    "login_compiler_node": "login_compiler_nodes",
+}
+
+# Mapping: INI section -> playbook stage variable
+INI_SECTION_TO_STAGE = {
+    "slurm_control_node": "slurm_ctl",
+    "slurm_node": "slurm_node",
+    "k8s_control_node": "k8s_master",
+    "k8s_worker_node": "k8s_worker",
+    "login_node": "login_node",
+    "login_compiler_node": "login_compiler_node",
+}
+
+# Dynamic host naming pattern (from prepare.yml add_host)
+# e.g., k8s_master_10_45_2_105 for IP 10.45.2.105
+DYNAMIC_HOST_PATTERNS = {
+    "k8s_control_node": "k8s_master_{ip_underscored}",
+    "k8s_worker_node": "k8s_worker_{ip_underscored}",
+    "slurm_control_node": "slurm_ctl_{ip_underscored}",
+    "slurm_node": "slurm_node_{ip_underscored}",
+    "login_node": "login_{ip_underscored}",
+    "login_compiler_node": "login_compiler_{ip_underscored}",
+}
+
+# =============================================================================
+# COMMAND CONFIGURATION
+# =============================================================================
+
+# The playbook is run directly on the OIM server (not inside a container).
+# The ansible.cfg at src/utils/ sets roles_path=roles, so the playbook
+# finds the log_collector role automatically.
+
+# Default mode (full/complete logs collection)
 LOG_COLLECTION_COMMAND = (
-    "cd /omnia/src/utils/playbooks && ansible-playbook collect.yml"
+    "cd /omnia/src/utils && ansible-playbook playbooks/collect.yml"
 )
 
-# Curated support mode (exclude temporary/stale-old logs)
+# Curated support mode (exclude temporary/stale-old logs via tag)
 LOG_COLLECTION_CURATED_MODE = (
-    "cd /omnia/src/utils/playbooks && ansible-playbook collect.yml"
-    " -e collection_mode=curated_support"
+    "cd /omnia/src/utils && ansible-playbook playbooks/collect.yml"
+    " --tags curated_support"
 )
 
-# Playbook path (inside omnia_core container)
+# Playbook path on the OIM server
 COLLECT_PLAYBOOK_PATH = "/omnia/src/utils/playbooks/collect.yml"
+
+# =============================================================================
+# OUTPUT PATHS (from roles/log_collector/vars/main.yml)
+# =============================================================================
+
+# Log collection workspace root on OIM
+LOG_ROOT = "/opt/omnia/utils/output/project_default/collect"
+
+OUTPUT_PATHS = {
+    "default_output_root": LOG_ROOT,
+    "workspace_prefix": "omnia_logs_",
+    "bundle_extension": ".tar.gz",
+    "metadata_filename": "metadata.json",
+    "bundle_dir_pattern": "omnia_logs_*",
+    # Subdirectories created during collection (from prepare.yml)
+    "k8s_subdir": "k8s",
+    "slurm_subdir": "slurm",
+}
 
 # =============================================================================
 # BUNDLE NAMING PATTERN
@@ -100,19 +193,110 @@ BUNDLE_NAME_PATTERN = r"omnia_logs_(?P<timestamp>\d{8}-\d{6})\.tar\.gz"
 BUNDLE_NAME_FORMAT = "omnia_logs_<YYYYMMDD-HHMMSS>.tar.gz"
 
 # =============================================================================
-# OUTPUT PATHS
+# LOG PATHS PER FUNCTIONAL GROUP (from roles/log_collector/vars/main.yml)
 # =============================================================================
 
-OUTPUT_PATHS = {
-    "default_output_root": "/opt/omnia/collector_logs",
-    "workspace_prefix": "omnia_logs_",
-    "bundle_extension": ".tar.gz",
-    "metadata_filename": "metadata.json",
-    "bundle_dir_pattern": "omnia_logs_*",
+LOG_PATHS: Dict[str, Dict[str, List[str]]] = {
+    "k8s_master": {
+        "dirs": [
+            "/var/log/containers/",
+            "/var/log/pods/",
+            "/var/log/calico/",
+            "/var/log/crio/",
+            "/var/log/chrony/",
+            "/var/log/private/",
+            "/var/log/rhsm/",
+        ],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+            "/var/log/dnf.log",
+            "/var/log/dnf.rpm.log",
+            "/var/log/dnf.librepo.log",
+            "/var/log/hawkey.log",
+            "/var/log/secure",
+            "/var/log/spooler",
+        ],
+    },
+    "k8s_worker": {
+        "dirs": [],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+            "/var/log/spooler",
+            "/var/log/messages",
+            "/var/log/cron",
+            "/var/log/secure",
+            "/var/log/maillog",
+            "/var/log/lastlog",
+            "/var/log/btmp",
+        ],
+    },
+    "slurm_ctl": {
+        "dirs": [
+            "/var/log/slurm/",
+            "/var/log/rhsm/",
+            "/var/log/private/",
+            "/var/log/chrony/",
+            "/var/log/munge/",
+            "/var/log/insights-client/",
+            "/var/log/mariadb/",
+        ],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+            "/var/log/ldms-cloudinit.log",
+        ],
+    },
+    "slurm_node": {
+        "dirs": [
+            "/var/log/slurm/",
+        ],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+        ],
+    },
+    "login_node": {
+        "dirs": [
+            "/var/log/slurm/",
+            "/var/log/chrony/",
+            "/var/log/private/",
+        ],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+            "/var/log/secure",
+            "/var/log/messages",
+        ],
+    },
+    "login_compiler_node": {
+        "dirs": [
+            "/var/log/slurm/",
+            "/var/log/chrony/",
+            "/var/log/private/",
+        ],
+        "files": [
+            "/var/log/cloud-init.log",
+            "/var/log/cloud-init-output.log",
+            "/var/log/secure",
+            "/var/log/messages",
+        ],
+    },
+}
+
+# Stage -> output subdirectory (k8s stages go to k8s/, slurm stages go to slurm/)
+STAGE_TO_SUBDIR = {
+    "k8s_master": "k8s",
+    "k8s_worker": "k8s",
+    "slurm_ctl": "slurm",
+    "slurm_node": "slurm",
+    "login_node": "slurm",
+    "login_compiler_node": "slurm",
 }
 
 # =============================================================================
-# METADATA FIELDS (per CSPEC-LOGEX-2026-001 Section 4)
+# METADATA FIELDS (from roles/log_collector/templates/metadata.json.j2)
 # =============================================================================
 
 METADATA_REQUIRED_FIELDS = [
@@ -130,7 +314,7 @@ METADATA_REQUIRED_FIELDS = [
     "warnings",
 ]
 
-# Warning Entry Schema (per CSPEC-LOGEX-2026-001 Section 4.2)
+# Warning Entry Schema (from rescue blocks and bundle.yml warning builders)
 WARNING_ENTRY_FIELDS = [
     "source",
     "node_name",
@@ -140,37 +324,39 @@ WARNING_ENTRY_FIELDS = [
     "timestamp",
 ]
 
-# =============================================================================
-# LOG SOURCES
-# =============================================================================
+# Valid warning reasons (from the role's rescue blocks and bundle.yml)
+WARNING_REASONS = [
+    "unreachable",
+    "missing_source",
+    "collection_error",
+]
 
-LOG_SOURCES = {
-    "kubernetes": {
-        "description": "Kubernetes cluster logs",
-        "sources": ["pod_logs", "node_logs", "system_logs"],
-    },
-    "slurm": {
-        "description": "Slurm workload manager logs",
-        "sources": ["job_logs", "scheduler_logs", "node_logs"],
-    },
-}
+# Valid warning sources (stage names used in warning payloads)
+WARNING_SOURCES = [
+    "k8s_master",
+    "k8s_worker",
+    "slurm_controller",
+    "slurm_node",
+    "login_node",
+    "login_compiler_node",
+]
 
 # =============================================================================
-# COLLECTION MODES
+# COLLECTION MODES (aligned with bundle.yml logic)
 # =============================================================================
 
 COLLECTION_MODES = {
-    "full": {
-        "description": "Include all available logs including temporary and stale files",
+    "complete logs": {
+        "description": "Include all available logs (default mode)",
         "excludes_temp": False,
         "excludes_stale": False,
-        "extra_vars": None,
+        "tag": None,
     },
     "curated_support": {
         "description": "Exclude temporary files and stale/old logs",
         "excludes_temp": True,
         "excludes_stale": True,
-        "extra_vars": "collection_mode=curated_support",
+        "tag": "curated_support",
         "exclusion_patterns": [
             "*.tmp", "*.temp", "*.bak", "*.gz", "*.bz2",
             "*.1", "*.2", "*.3", "*.4", "*.5",
@@ -210,8 +396,9 @@ TIMEOUTS = {
     "collection_start": 30,
     "collection_complete": 600,
     "hash_generation": 120,
-    "ssh_connect": 30,
+    "ssh_connect": 60,       # Matches ansible.cfg ConnectTimeout
     "command_execution": 300,
+    "ansible_timeout": 180,  # Matches ansible.cfg timeout
 }
 
 # =============================================================================
@@ -227,18 +414,21 @@ EXIT_CODES = {
 }
 
 # =============================================================================
-# WARNING PATTERNS
+# WARNING PATTERNS (from actual playbook output)
 # =============================================================================
 
 WARNING_PATTERNS = {
     "unreachable_node": (
-        r"Node\s+(\S+)\s+\(([0-9.]+)\)\s+unreachable;"
-        r"\s+continuing\s+collection\s+for\s+remaining\s+nodes"
+        r"Node\s+(\S+)\s+\(([0-9.]+)\)\s+(?:not reachable|unreachable)"
     ),
-    "missing_source": r"Source file\s+(\S+)\s+not found on node\s+(\S+)",
+    "missing_source": (
+        r"Expected log (?:directory|file)\s+(\S+)\s+missing on node\s+(\S+)"
+    ),
     "output_not_writable": r"Output directory not writable:\s+(\S+)",
-    "archive_failure": r"Archive generation failed:\s+(.+)",
+    "archive_failure": r"Bundle archive was not created correctly",
     "disk_full": r"No space left on device",
+    "ssh_failed": r"Failed to connect to the host via ssh",
+    "collection_error": r"Collection task failed for stage\s+(\S+)",
 }
 
 # =============================================================================
@@ -268,103 +458,101 @@ REQUIRED_CONFIG_FIELDS = [
 ]
 
 REQUIRED_DATASET_FILES = [
-    "input/utils_config.yml",
+    "input/collect.ini",
 ]
 
-REQUIRED_SRC_FILES: list = []
+REQUIRED_SRC_FILES = [
+    "input/collect.ini",
+]
 
 # =============================================================================
 # CENTRALIZED SHELL COMMANDS
 # =============================================================================
 # All shell commands used by verification functions.
 # Use .format() with named placeholders to fill in runtime values.
+#
+# NOTE: collect.yml runs directly on the OIM host (not inside a container).
+# Commands that inspect output artifacts also run on the OIM host directly.
 
 CMDS: Dict[str, str] = {
     # --- Collection ---
-    "collect_logs": "{command}",
-    "collect_logs_container": (
-        "podman exec {container} bash -c '{command}'"
+    "collect_logs": (
+        "cd /omnia/src/utils && ansible-playbook playbooks/collect.yml"
+    ),
+    "collect_logs_curated": (
+        "cd /omnia/src/utils && ansible-playbook playbooks/collect.yml"
+        " --tags curated_support"
+    ),
+
+    # --- Inventory ---
+    "cat_collect_ini": "cat {ini_path}",
+    "validate_ini_parse": (
+        "python3 -c \""
+        "import configparser, json; "
+        "c = configparser.ConfigParser(allow_no_value=True); "
+        "c.read('{ini_path}'); "
+        "print(json.dumps({{s: [k.strip() for k in c[s].keys() "
+        "if k.strip() and not k.strip().startswith('#')] "
+        "for s in c.sections()}}))\""
     ),
 
     # --- Workspace / Bundle ---
     "find_workspace": (
-        "podman exec {container} bash -c "
-        "'ls -td {output_root}/{dir_pattern} 2>/dev/null | head -1'"
+        "ls -td {output_root}/{dir_pattern} 2>/dev/null | head -1"
     ),
     "find_bundle": (
-        "podman exec {container} bash -c "
-        "'ls -t {output_root}/omnia_logs_*/*.tar.gz 2>/dev/null | head -1'"
+        "ls -t {output_root}/omnia_logs_*/*.tar.gz 2>/dev/null | head -1"
     ),
-    "dir_exists_container": (
-        "podman exec {container} test -d {path} "
-        "&& echo 'exists' || echo 'not_exists'"
-    ),
-    "file_exists_container": (
-        "podman exec {container} test -f {path} "
-        "&& echo 'exists' || echo 'not_exists'"
-    ),
+    "dir_exists": "test -d {path} && echo 'exists' || echo 'not_exists'",
+    "file_exists": "test -f {path} && echo 'exists' || echo 'not_exists'",
 
     # --- Metadata ---
-    "read_metadata": (
-        "podman exec {container} cat {workspace}/metadata.json"
-    ),
-    "validate_json_container": (
-        "podman exec {container} python3 -c "
-        "\"import json; json.load(open('{file_path}'))\""
+    "read_metadata": "cat {workspace}/metadata.json",
+    "validate_json": (
+        "python3 -c \"import json; json.load(open('{file_path}'))\""
     ),
 
     # --- Archive ---
-    "list_archive": (
-        "podman exec {container} tar -tzf {archive_path}"
-    ),
-    "extract_archive": (
-        "podman exec {container} tar -xzf {archive_path} -C {extract_dir}"
-    ),
+    "list_archive": "tar -tzf {archive_path}",
+    "extract_archive": "tar -xzf {archive_path} -C {extract_dir}",
 
     # --- SHA256 ---
-    "compute_sha256": (
-        "podman exec {container} sha256sum {file_path} | awk '{{print $1}}'"
-    ),
+    "compute_sha256": "sha256sum {file_path} | awk '{{print $1}}'",
 
     # --- Permissions / Disk ---
-    "set_permissions": (
-        "podman exec {container} chmod {mode} {path}"
-    ),
+    "set_permissions": "chmod {mode} {path}",
     "check_writable": (
-        "podman exec {container} bash -c "
-        "\"test -w {path} && echo 'writable' || echo 'not_writable'\""
+        "test -w {path} && echo 'writable' || echo 'not_writable'"
     ),
     "fill_disk": (
-        "podman exec {container} bash -c "
-        "'dd if=/dev/zero of={path}/fillfile bs=1M count={size_mb} "
-        "2>/dev/null || true'"
+        "dd if=/dev/zero of={path}/fillfile bs=1M count={size_mb} "
+        "2>/dev/null || true"
     ),
-    "free_disk": (
-        "podman exec {container} rm -f {path}/fillfile"
-    ),
+    "free_disk": "rm -f {path}/fillfile",
 
     # --- Test file management ---
-    "create_temp_file": "podman exec {container} touch {path}",
-    "create_stale_file": (
-        "podman exec {container} bash -c "
-        "\"touch -d '{days} days ago' {path}\""
-    ),
-    "remove_file": "podman exec {container} rm -f {path}",
+    "create_temp_file": "touch {path}",
+    "create_stale_file": "touch -d '{days} days ago' {path}",
+    "remove_file": "rm -f {path}",
 
     # --- Cleanup ---
-    "rm_dir": "podman exec {container} rm -rf {path}",
-    "rm_file": "podman exec {container} rm -f {path}",
+    "rm_dir": "rm -rf {path}",
+    "rm_file": "rm -f {path}",
 
     # --- Content checksum ---
     "content_checksum": (
-        "podman exec {container} bash -c "
-        "\"find {dir_path} -type f ! -name 'metadata.json' "
-        "-exec md5sum {{}} \\; | sort | md5sum\""
+        "find {dir_path} -type f ! -name 'metadata.json' "
+        "-exec md5sum {{}} \\; | sort | md5sum"
     ),
 
     # --- System ---
     "echo_test": "echo connectivity_ok 2>/dev/null",
-    "file_exists": "test -f {path} && echo exists",
-    "dir_exists": "test -d {path} && echo exists",
     "cat_file": "cat {path} 2>/dev/null",
+
+    # --- SSH failure marker ---
+    "find_failure_markers": (
+        "find {output_root} -name 'SSH_COLLECTION_FAILED.txt' "
+        "-type f 2>/dev/null"
+    ),
+    "read_failure_marker": "cat {marker_path}",
 }

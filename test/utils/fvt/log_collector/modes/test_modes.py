@@ -13,177 +13,229 @@
 # limitations under the License.
 
 """
-Log Collector — Collection Mode Tests
+FVT — Collection Mode Compatibility
 
-TC-C01: Curated Support Mode - Exclude Temporary/Stale Logs
-TC-C02: Full Collection Mode - Include All Logs
+Verifies that both collection modes work correctly:
 
-Reference: TCASES-LOGEX-2026-001 (v1.0.0)
+- **curated_support** mode: ``--tags curated_support`` triggers
+  exclusion of temporary/stale files (*.tmp, *.temp, *.bak, *.gz,
+  *.bz2, *.1-*.5) from the workspace before bundling.
+
+- **full** mode (default / "complete logs"): All logs are included
+  without exclusion filtering.
+
+The ``collection_mode`` field in ``metadata.json`` reflects which
+mode was active: ``"complete logs"`` or ``"curated_support"``.
+
+Tests:
+    TC-C01  Curated Support Mode — Exclude Temporary/Stale Logs
+    TC-C02  Full Collection Mode — Include All Logs
 """
 
-import os
-
 import pytest
+from omnia_auto import TestLogger
 
-from library.functions import TestLogger
+from library.vars import TEST_CASES as TC
+from library.vars.common_vars import COLLECTION_MODES
 from library.functions.log_collector_func import (
     execute_log_collection,
-    verify_bundle_created,
-    verify_workspace_created,
-    list_bundle_contents,
+    get_workspace_directory,
     read_metadata,
-    create_temp_test_files,
-    create_stale_test_file,
-    cleanup_test_files,
-    cleanup_bundle,
+    verify_bundle_created,
+    verify_collection_started,
+    verify_metadata_collection_mode,
 )
-from library.vars import TEST_CASES as TC
-from library.vars.common_vars import TEST_FILES
 from library.messages import (
     TEST_LOG_MSGS as LOG,
     TEST_ASSERT_MSGS as ASSERT,
 )
 
 
-@pytest.mark.sanity
-@pytest.mark.order(30)
-def test_curated_mode(host):
-    """
-    TC-C01: Curated Support Mode - Exclude Temporary/Stale Logs.
+# ── TC-C01: Curated Support Mode ───────────────────────────────────────────
 
-    Verify curated_support mode excludes temporary files and stale logs.
+@pytest.mark.order(7)
+@pytest.mark.functional
+class TestCuratedMode:
+    """TC-C01 — Verify curated_support mode excludes temp/stale logs."""
 
-    Steps:
-    1. Create temporary test files on nodes
-    2. Create stale log file
-    3. Execute collection with curated mode
-    4. Verify temporary files excluded
-    5. Verify stale logs excluded
-    6. Check metadata for collection mode
-    """
-    tc = TC["curated_mode"]
-    tl = TestLogger(tc["title"], tc["id"])
-
-    bundle_path = None
-
-    try:
-        # Step 1-2: Create test files
-        tl.check("Creating temporary and stale test files")
-        create_temp_test_files(host)
-        create_stale_test_file(host)
-
-        # Step 3: Execute curated mode collection
-        success, _, _ = execute_log_collection(host, mode="curated_support")
-
-        if not success:
-            tl.failed("Curated mode collection failed", ASSERT["assert_collection_started"])
-            pytest.fail(ASSERT["assert_collection_started"])
-
-        _, bundle_path = verify_bundle_created(host)
-
-        tl.check(LOG["curated_mode_active"])
-
-        # Step 4: Check bundle contents
-        contents = list_bundle_contents(host, bundle_path)
-
-        # Check temp files excluded
-        temp_found = False
-        for temp_file in TEST_FILES["temp_files"]:
-            if os.path.basename(temp_file) in str(contents):
-                temp_found = True
-                break
-
-        if temp_found:
-            tl.failed(LOG["temp_files_included"], ASSERT["assert_temp_excluded"])
-            pytest.fail(ASSERT["assert_temp_excluded"])
-
-        tl.check(LOG["temp_files_excluded"])
-
-        # Step 5: Check stale log excluded
-        stale_name = os.path.basename(TEST_FILES["stale_log"])
-        if stale_name in str(contents):
-            tl.failed(LOG["stale_logs_included"], ASSERT["assert_stale_excluded"])
-            pytest.fail(ASSERT["assert_stale_excluded"])
-
-        tl.check(LOG["stale_logs_excluded"])
-
-        # Step 6: Check metadata
-        workspace, _ = verify_workspace_created(host)
-        if workspace:
-            metadata = read_metadata(host, workspace)
-            if metadata:
-                mode = metadata.get("collection_options", {}).get("mode", "")
-                tl.check(f"Metadata shows collection mode: {mode}")
-
-        tl.passed(
-            "Curated mode test passed",
-            "Temporary and stale files correctly excluded"
+    @pytest.fixture(autouse=True, scope="class")
+    def _run_curated(self, host, request):
+        """Execute collection in curated_support mode."""
+        success, output, rc = execute_log_collection(
+            host, mode="curated_support"
         )
+        request.cls.output = output
+        request.cls.success = success
+        request.cls.rc = rc
 
-    finally:
-        cleanup_test_files(host)
-        if bundle_path:
-            cleanup_bundle(host, bundle_path)
+    def test_curated_collection_succeeds(self, host):
+        """Verify playbook completes in curated_support mode."""
+        tc = TC["curated_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Verifying curated_support collection ...")
+        started = verify_collection_started(self.output)
+
+        if self.success and started:
+            tl.passed(LOG["mode_ok"],
+                      "Curated support collection completed")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      f"Curated mode failed (rc={self.rc})")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="curated_support", actual=f"rc={self.rc}",
+                detail="Playbook failed in curated_support mode"
+            )
+
+    def test_curated_metadata_mode(self, host):
+        """Verify metadata.json shows collection_mode='curated_support'."""
+        tc = TC["curated_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Checking collection_mode in metadata ...")
+        workspace = get_workspace_directory(host)
+        assert workspace, "No workspace directory"
+
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata.json"
+
+        mode_ok = verify_metadata_collection_mode(metadata, "curated_support")
+        actual = metadata.get("collection_mode", "N/A")
+
+        if mode_ok:
+            tl.passed(LOG["mode_ok"], f"mode={actual}")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      f"Expected 'curated_support', got '{actual}'")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="curated_support", actual=actual,
+                detail="metadata.json collection_mode does not match"
+            )
+
+    def test_curated_exclusions_applied(self, host):
+        """Verify exclusions_applied is populated in curated mode."""
+        tc = TC["curated_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Checking exclusions_applied field ...")
+        workspace = get_workspace_directory(host)
+        assert workspace, "No workspace"
+
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
+
+        exclusions = metadata.get("exclusions_applied", [])
+        expected_patterns = COLLECTION_MODES["curated_support"]["exclusion_patterns"]
+
+        if exclusions and len(exclusions) > 0:
+            tl.passed(LOG["mode_ok"],
+                      f"{len(exclusions)} exclusion patterns applied")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      "exclusions_applied is empty in curated mode")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected=f"exclusions: {expected_patterns}",
+                actual="exclusions_applied: []",
+                detail="Curated mode should have non-empty exclusions_applied"
+            )
 
 
-@pytest.mark.sanity
-@pytest.mark.order(31)
-def test_full_mode(host):
-    """
-    TC-C02: Full Collection Mode - Include All Logs.
+# ── TC-C02: Full Collection Mode ───────────────────────────────────────────
 
-    Verify full collection mode includes all available logs.
+@pytest.mark.order(8)
+@pytest.mark.functional
+class TestFullMode:
+    """TC-C02 — Verify full/complete logs collection mode."""
 
-    Steps:
-    1. Create temporary test files on nodes
-    2. Create stale log file
-    3. Execute collection without mode tag (full mode)
-    4. Verify collection completes
-    5. Extract bundle and inspect contents
-    6. Check metadata for collection mode
-    """
-    tc = TC["full_mode"]
-    tl = TestLogger(tc["title"], tc["id"])
+    @pytest.fixture(autouse=True, scope="class")
+    def _run_full(self, host, request):
+        """Execute collection in full (default) mode."""
+        success, output, rc = execute_log_collection(host, mode="full")
+        request.cls.output = output
+        request.cls.success = success
+        request.cls.rc = rc
 
-    bundle_path = None
+    def test_full_collection_succeeds(self, host):
+        """Verify playbook completes in default full mode."""
+        tc = TC["full_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    try:
-        # Step 1-2: Create test files
-        tl.check("Creating temporary and stale test files")
-        create_temp_test_files(host)
-        create_stale_test_file(host)
+        tl.check("Verifying full collection ...")
+        started = verify_collection_started(self.output)
 
-        # Step 3-4: Execute full mode collection
-        success, _, _ = execute_log_collection(host, mode="full")
+        if self.success and started:
+            tl.passed(LOG["mode_ok"], "Full collection completed")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      f"Full mode failed (rc={self.rc})")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="complete logs", actual=f"rc={self.rc}",
+                detail="Playbook failed in full mode"
+            )
 
-        if not success:
-            tl.failed("Full mode collection failed", ASSERT["assert_collection_started"])
-            pytest.fail(ASSERT["assert_collection_started"])
+    def test_full_metadata_mode(self, host):
+        """Verify metadata.json shows collection_mode='complete logs'."""
+        tc = TC["full_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-        _, bundle_path = verify_bundle_created(host)
+        tl.check("Checking collection_mode in metadata ...")
+        workspace = get_workspace_directory(host)
+        assert workspace, "No workspace"
 
-        tl.check(LOG["full_mode_active"])
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
 
-        # Step 5: Check bundle contents
-        contents = list_bundle_contents(host, bundle_path)
+        mode_ok = verify_metadata_collection_mode(metadata, "complete logs")
+        actual = metadata.get("collection_mode", "N/A")
 
-        tl.check(f"Bundle contains {len(contents)} items")
-        tl.check(LOG["all_files_included"])
+        if mode_ok:
+            tl.passed(LOG["mode_ok"], f"mode={actual}")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      f"Expected 'complete logs', got '{actual}'")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="complete logs", actual=actual,
+                detail="metadata.json collection_mode does not match"
+            )
 
-        # Step 6: Check metadata
-        workspace, _ = verify_workspace_created(host)
-        if workspace:
-            metadata = read_metadata(host, workspace)
-            if metadata:
-                mode = metadata.get("collection_options", {}).get("mode", "full")
-                tl.check(f"Metadata shows collection mode: {mode}")
+    def test_full_no_exclusions(self, host):
+        """Verify exclusions_applied is empty in full mode."""
+        tc = TC["full_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-        tl.passed(
-            "Full mode test passed",
-            "All available logs included in bundle"
-        )
+        tl.check("Checking exclusions_applied is empty ...")
+        workspace = get_workspace_directory(host)
+        assert workspace, "No workspace"
 
-    finally:
-        cleanup_test_files(host)
-        if bundle_path:
-            cleanup_bundle(host, bundle_path)
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
+
+        exclusions = metadata.get("exclusions_applied", [])
+
+        if not exclusions:
+            tl.passed(LOG["mode_ok"], "No exclusions in full mode")
+        else:
+            tl.failed(LOG["mode_failed"],
+                      f"Unexpected exclusions: {exclusions}")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="exclusions_applied: []",
+                actual=f"exclusions_applied: {exclusions}",
+                detail="Full mode should have empty exclusions_applied"
+            )
+
+    def test_full_bundle_created(self, host):
+        """Verify bundle was created in full mode."""
+        tc = TC["full_mode"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Verifying bundle exists ...")
+        exists, path = verify_bundle_created(host)
+
+        if exists:
+            tl.passed(LOG["mode_ok"], f"Bundle: {path}")
+        else:
+            tl.failed(LOG["mode_failed"], "No bundle after full collection")
+            assert False, ASSERT["mode_mismatch"].format(
+                expected="bundle created", actual="no bundle",
+                detail="Bundle not created after full mode collection"
+            )

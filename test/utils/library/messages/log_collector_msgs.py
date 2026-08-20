@@ -17,6 +17,13 @@ Log Collector — Messages
 
 Contains all user-facing messages for log collection tests.
 
+Aligned with the developer implementation:
+- collect.yml reads collect.ini (INI inventory)
+- Functional groups: k8s_control_node, k8s_worker_node,
+  slurm_control_node, slurm_node, login_node, login_compiler_node
+- Output: /opt/omnia/utils/output/project_default/collect/
+- Modes: "complete logs" (default) and "curated_support" (via --tags)
+
 Reference: TCASES-LOGEX-2026-001 (v1.0.0)
 """
 
@@ -63,19 +70,55 @@ TEST_LOG_MSGS: Dict[str, str] = {
     "playbook_failed": "Playbook failed (rc={rc}, duration: {duration}s)",
 
     # Collection Invocation (TC-F01)
-    "collection_started": "Log collection command started successfully",
-    "collection_failed_start": "Log collection command failed to start",
+    "collection_started": "Log collection started successfully",
+    "collection_failed": "Log collection failed to start",
+
+    # Source Collection (TC-F02)
+    "source_collected": "Source collection completed",
+    "source_failed": "Source collection failed",
+
+    # Metadata (TC-F03)
+    "metadata_ok": "Metadata verification passed",
+    "metadata_failed": "Metadata verification failed",
+
+    # Bundle Construction (TC-F04)
+    "bundle_ok": "Bundle verification passed",
+    "bundle_failed": "Bundle verification failed",
+
+    # Hash Generation (TC-F05)
+    "hash_ok": "Hash verification passed",
+    "hash_failed": "Hash verification failed",
+
+    # Completion Output (TC-F06)
+    "output_ok": "Completion output verification passed",
+    "output_failed": "Completion output verification failed",
+
+    # Modes (TC-C01, TC-C02)
+    "mode_ok": "Collection mode verification passed",
+    "mode_failed": "Collection mode verification failed",
+
+    # Error Handling (TC-E01..E04)
+    "error_handled": "Error handled gracefully",
+    "error_not_handled": "Error not handled correctly",
+
+    # Idempotency (TC-I01)
+    "idempotency_ok": "Idempotency check passed — content identical",
+    "idempotency_failed": "Idempotency check failed — content differs",
+
+    # --- Detailed messages (backward-compatible) ---
+
+    # Collection
     "workspace_created": "Workspace directory created: {workspace}",
     "workspace_not_created": "Workspace directory was not created",
     "runtime_context_resolved": "Runtime context resolved - identified {node_count} nodes",
 
-    # Source Collection (TC-F02)
+    # Source Collection
     "k8s_logs_collected": "Kubernetes log sources collected successfully",
     "slurm_logs_collected": "Slurm log sources collected successfully",
     "source_iteration_complete": "All configured sources processed",
     "warnings_recorded": "Warnings recorded: {count}",
 
-    # Metadata (TC-F03)
+    # Metadata
     "metadata_generated": "Metadata JSON generated successfully",
     "metadata_missing": "Metadata file not found in workspace",
     "metadata_valid_json": "Metadata is valid JSON format",
@@ -83,7 +126,7 @@ TEST_LOG_MSGS: Dict[str, str] = {
     "metadata_field_present": "Metadata field '{field}' is present",
     "metadata_field_missing": "Metadata field '{field}' is missing",
 
-    # Bundle Construction (TC-F04)
+    # Bundle Construction
     "bundle_created": "Bundle archive created: {bundle}",
     "bundle_not_created": "Bundle archive was not created",
     "bundle_name_valid": "Bundle filename matches expected format",
@@ -92,7 +135,7 @@ TEST_LOG_MSGS: Dict[str, str] = {
     "bundle_corrupted": "Bundle archive is corrupted or unreadable",
     "bundle_contents_valid": "Bundle contains expected logs and metadata",
 
-    # Hash Generation (TC-F05)
+    # Hash Generation
     "hash_generated": "SHA256 hash generated: {hash}",
     "hash_not_generated": "SHA256 hash was not generated",
     "hash_format_valid": "Hash format is valid (64-character hex)",
@@ -101,7 +144,7 @@ TEST_LOG_MSGS: Dict[str, str] = {
     "hash_mismatch": "Hash mismatch - generated: {generated}, computed: {computed}",
     "hash_timeout": "Hash generation exceeded timeout ({timeout}s)",
 
-    # Completion Output (TC-F06)
+    # Completion Output
     "output_workspace_path": "Workspace path printed in output",
     "output_bundle_path": "Bundle path printed in output",
     "output_sha256": "SHA256 digest printed in output",
@@ -157,47 +200,117 @@ TEST_LOG_MSGS: Dict[str, str] = {
 # =============================================================================
 
 TEST_ASSERT_MSGS: Dict[str, str] = {
-    # Deploy
+    # --- Compact assertion keys used by test files ---
+
+    "collection_not_started": (
+        "Log collection did not start.\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Verify collect.ini exists at the configured path\n"
+        "  2. Verify ansible-playbook is available on OIM\n"
+        "  3. Re-run manually: cd /omnia/src/utils && "
+        "ansible-playbook playbooks/collect.yml"
+    ),
+    "source_not_collected": (
+        "Source collection incomplete.\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Check playbook output for errors\n"
+        "  2. Verify SSH connectivity to target nodes\n"
+        "  3. Check collect.ini has valid node IPs"
+    ),
+    "metadata_missing": (
+        "Metadata verification failed.\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Check workspace directory exists\n"
+        "  2. Verify metadata.json.j2 template in roles/log_collector/templates/\n"
+        "  3. Check bundle.yml completed without errors"
+    ),
+    "bundle_not_created": (
+        "Bundle creation failed.\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Check output root is writable\n"
+        "  2. Verify sufficient disk space: df -h /opt/omnia\n"
+        "  3. Check tar/gzip are available on OIM"
+    ),
+    "hash_mismatch": (
+        "SHA256 hash mismatch.\n"
+        "Metadata hash: {metadata_hash}\n"
+        "Computed hash: {computed_hash}\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Verify bundle was not modified after creation\n"
+        "  2. Check bundle.yml updates metadata with SHA256"
+    ),
+    "output_incomplete": (
+        "Completion output verification failed.\n"
+        "Detail: {detail}\n"
+        "\n"
+        "HOW TO FIX:\n"
+        "  1. Check that bundle.yml 'Completion summary' task ran\n"
+        "  2. Verify no fatal errors before the summary task"
+    ),
+    "mode_mismatch": (
+        "Collection mode mismatch.\n"
+        "Expected: {expected}\n"
+        "Actual: {actual}\n"
+        "Detail: {detail}"
+    ),
+    "error_not_detected": (
+        "Error condition not handled correctly.\n"
+        "Error type: {error_type}\n"
+        "Detail: {detail}"
+    ),
+    "idempotency_failed": (
+        "Idempotency check failed — bundle contents differ.\n"
+        "Checksum 1: {checksum1}\n"
+        "Checksum 2: {checksum2}\n"
+        "Detail: {detail}"
+    ),
+
+    # --- Legacy verbose assertion keys (backward-compatible) ---
+
     "playbook_failed": (
         "Playbook {playbook} --tags {tag} failed.\n"
         "RC: {rc} | Duration: {duration}s\n"
         "\n"
         "HOW TO FIX:\n"
         "  1. Check playbook output above for errors\n"
-        "  2. Verify omnia_core container is running: podman ps\n"
-        "  3. Re-run manually: podman exec omnia_core bash -c "
-        "'cd /omnia/src/utils/playbooks && ansible-playbook collect.yml'"
+        "  2. Verify ansible-playbook is available on OIM\n"
+        "  3. Re-run manually: cd /omnia/src/utils && "
+        "ansible-playbook playbooks/collect.yml"
     ),
-
-    # Collection
     "assert_collection_started": (
         "Collection command should start without errors.\n"
         "\n"
         "HOW TO FIX:\n"
-        "  1. Verify omnia_core container is running: podman ps\n"
-        "  2. Check playbook exists: podman exec omnia_core ls /omnia/src/utils/playbooks/collect.yml"
+        "  1. Verify collect.ini at /opt/omnia/utils/input/project_default/\n"
+        "  2. Check playbook: ls /omnia/src/utils/playbooks/collect.yml"
     ),
     "assert_workspace_created": (
         "Workspace directory should be created.\n"
         "\n"
         "HOW TO FIX:\n"
         "  1. Check output directory is writable: "
-        "podman exec omnia_core test -w /opt/omnia/collector_logs\n"
-        "  2. Check disk space: podman exec omnia_core df -h /opt/omnia"
+        "test -w /opt/omnia/utils/output/project_default/collect\n"
+        "  2. Check disk space: df -h /opt/omnia"
     ),
     "assert_runtime_resolved": "Runtime context should be resolved",
-
-    # Sources
     "assert_k8s_collected": "Kubernetes logs should be collected",
     "assert_slurm_collected": "Slurm logs should be collected",
     "assert_sources_complete": "All sources should be processed",
-
-    # Metadata
     "assert_metadata_exists": (
         "Metadata JSON should exist in workspace.\n"
         "\n"
         "HOW TO FIX:\n"
-        "  1. Check workspace: podman exec omnia_core ls -la {workspace}/\n"
+        "  1. Check workspace: ls -la {workspace}/\n"
         "  2. Verify collection completed successfully"
     ),
     "assert_metadata_valid": "Metadata should be valid JSON",
@@ -205,13 +318,11 @@ TEST_ASSERT_MSGS: Dict[str, str] = {
         "Metadata should contain all required fields.\n"
         "Missing: {missing}"
     ),
-
-    # Bundle
     "assert_bundle_created": (
         "Bundle archive should be created.\n"
         "\n"
         "HOW TO FIX:\n"
-        "  1. Check output: podman exec omnia_core ls -la /opt/omnia/collector_logs/\n"
+        "  1. Check output: ls -la /opt/omnia/utils/output/project_default/collect/\n"
         "  2. Verify disk space and permissions"
     ),
     "assert_bundle_name_format": (
@@ -221,8 +332,6 @@ TEST_ASSERT_MSGS: Dict[str, str] = {
     ),
     "assert_bundle_readable": "Bundle should be readable and extractable",
     "assert_bundle_contents": "Bundle should contain collected logs and metadata",
-
-    # Hash
     "assert_hash_generated": "SHA256 hash should be generated",
     "assert_hash_format": "Hash should be 64-character hexadecimal",
     "assert_hash_match": (
@@ -231,26 +340,18 @@ TEST_ASSERT_MSGS: Dict[str, str] = {
         "Computed:  {computed}"
     ),
     "assert_hash_time": "Hash should be computed within {timeout} seconds",
-
-    # Output
     "assert_workspace_output": "Workspace path should be printed",
     "assert_bundle_output": "Bundle path should be printed",
     "assert_hash_output": "SHA256 should be printed",
     "assert_warnings_output": "Warning summary should be printed",
     "assert_paths_absolute": "Paths should be absolute",
-
-    # Errors
     "assert_not_writable_error": "Command should fail with 'not writable' error",
     "assert_no_artifacts": "No partial artifacts should be created",
     "assert_unreachable_warning": "Warning should be emitted for unreachable node",
     "assert_missing_warning": "Warning should be emitted for missing source",
     "assert_archive_error": "Command should fail with archive error",
-
-    # Idempotency
     "assert_different_names": "Bundle filenames should differ (timestamps)",
     "assert_same_contents": "Bundle contents should be identical",
-
-    # Modes
     "assert_temp_excluded": "Temporary files should be excluded in curated mode",
     "assert_stale_excluded": "Stale logs should be excluded in curated mode",
     "assert_all_included": "All files should be included in full mode",
@@ -262,12 +363,23 @@ TEST_ASSERT_MSGS: Dict[str, str] = {
 
 ERROR_MSGS: Dict[str, str] = {
     "output_not_writable": "Output directory not writable: {path}",
-    "archive_failed": "Archive generation failed: {reason}",
+    "archive_failed": "Bundle archive was not created correctly",
     "node_unreachable": (
         "Node {hostname} ({ip}) unreachable; "
         "continuing collection for remaining nodes."
     ),
-    "source_not_found": "Source file {source} not found on node {node}",
+    "source_not_found": (
+        "Expected log {type} {source} missing on node "
+        "{node} ({ip}); continuing collection."
+    ),
     "disk_full": "No space left on device",
     "permission_denied": "Permission denied: {path}",
+    "inventory_missing": (
+        "Node inventory file not found: {path}. "
+        "Create this file with node groups and IP addresses."
+    ),
+    "ssh_collection_failed": (
+        "Collection task failed for stage {stage} on node "
+        "{node} ({ip}): {error}"
+    ),
 }

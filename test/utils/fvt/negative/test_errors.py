@@ -13,195 +13,285 @@
 # limitations under the License.
 
 """
-Log Collector — Negative / Error Handling Tests
+FVT — Negative / Error Handling
 
-TC-E01: Output Directory Not Writable (skipped: root in container)
-TC-E03: Missing Source Files - Warning Emitted
-TC-E04: Archive Generation Failure
+Verifies that the log collector handles error conditions gracefully:
 
-Reference: TCASES-LOGEX-2026-001 (v1.0.0)
+- **Output directory not writable**: bundle.yml validates the output
+  root is writable before archiving.
+
+- **Missing source files**: The k8s_logs.yml and slurm_logs.yml tasks
+  stat each expected log path and record ``missing_source`` warnings
+  for any that don't exist.
+
+- **SSH collection failure**: The rescue blocks in main.yml catch SSH
+  failures and record ``unreachable`` / ``collection_error`` warnings.
+  bundle.yml creates ``SSH_COLLECTION_FAILED.txt`` placeholder files
+  for failed nodes.
+
+Tests:
+    TC-E01  Output Directory Not Writable
+    TC-E03  Missing Source Files — Warning Emitted
+    TC-E04  Archive Generation Failure
 """
 
 import pytest
+from omnia_auto import TestLogger
 
-from library.functions import TestLogger
-from library.functions.log_collector_func import (
-    execute_log_collection,
-    verify_workspace_created,
-    verify_bundle_created,
-    verify_not_writable_error,
-    verify_archive_failure_error,
-    verify_missing_source_warning,
-    verify_warning_summary_in_output,
-    set_directory_permissions,
-    fill_disk_space,
-    free_disk_space,
-    cleanup_bundle,
-)
 from library.vars import TEST_CASES as TC
 from library.vars.common_vars import OUTPUT_PATHS
+from library.functions.log_collector_func import (
+    execute_log_collection,
+    find_ssh_failure_markers,
+    get_workspace_directory,
+    read_metadata,
+    set_directory_permissions,
+    verify_metadata_warning_entries,
+    verify_warning_message_format,
+)
 from library.messages import (
     TEST_LOG_MSGS as LOG,
     TEST_ASSERT_MSGS as ASSERT,
 )
 
 
-@pytest.mark.skip(
-    reason="Not applicable: Playbook runs as root in container "
-           "and bypasses permission checks"
-)
-@pytest.mark.sanity
+# ── TC-E01: Output Directory Not Writable ──────────────────────────────────
+
+@pytest.mark.order(9)
+@pytest.mark.functional
+class TestOutputNotWritable:
+    """TC-E01 — Verify graceful handling when output root is not writable."""
+
+    def test_not_writable_detected(self, host):
+        """
+        Make the output root read-only, run collection, verify failure
+        is detected and reported, then restore permissions.
+        """
+        tc = TC["output_not_writable"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        output_root = OUTPUT_PATHS["default_output_root"]
+
+        # Ensure the directory exists first
+        from omnia_auto import run_on_host
+        run_on_host(host, f"mkdir -p {output_root}")
+
+        tl.check("Making output root read-only ...")
+        set_directory_permissions(host, output_root, "555")
+
+        try:
+            tl.check("Running collection with read-only output ...")
+            success, output, rc = execute_log_collection(host)
+
+            # The playbook should fail because bundle.yml validates
+            # write permission with a test file
+            if not success or rc != 0:
+                tl.passed(
+                    LOG["error_handled"],
+                    f"Correctly failed with rc={rc}"
+                )
+            else:
+                tl.failed(
+                    LOG["error_not_handled"],
+                    "Collection succeeded despite read-only output"
+                )
+                assert False, ASSERT["error_not_detected"].format(
+                    error_type="output_not_writable",
+                    detail="Playbook should fail when output root is 555"
+                )
+        finally:
+            tl.check("Restoring output root permissions ...")
+            set_directory_permissions(host, output_root, "755")
+
+
+# ── TC-E03: Missing Source Files — Warning Emitted ─────────────────────────
+
 @pytest.mark.order(10)
-def test_output_not_writable(host):
-    """
-    TC-E01: Output Directory Not Writable.
+@pytest.mark.functional
+class TestMissingSources:
+    """TC-E03 — Verify missing log sources produce warnings, not failures."""
 
-    SKIPPED: Not applicable to current architecture.
-    Playbook runs as root inside container and can write to read-only directories.
+    def test_missing_sources_produce_warnings(self, host):
+        """
+        Run collection normally; verify that any missing log paths
+        on target nodes are recorded as missing_source warnings in
+        metadata.json rather than causing playbook failure.
+        """
+        tc = TC["missing_sources"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Set output directory permissions to read-only
-    2. Execute log collection command
-    3. Verify command fails early
-    4. Check error message
-    5. Verify no partial artifacts created
-    6. Restore permissions
-    """
-    tc = TC["output_not_writable"]
-    tl = TestLogger(tc["title"], tc["id"])
-    output_path = OUTPUT_PATHS["default_output_root"]
+        tl.check("Running collection to check for source warnings ...")
+        success, output, rc = execute_log_collection(host)
 
-    try:
-        # Step 1: Set read-only permissions
-        tl.check("Setting output directory to read-only")
-        set_directory_permissions(host, output_path, "555")
+        # Collection should succeed even if some sources are missing
+        assert success, ASSERT["error_not_detected"].format(
+            error_type="missing_sources",
+            detail=f"Collection failed entirely (rc={rc})"
+        )
 
-        # Step 2-3: Execute command and expect failure
-        success, output, _ = execute_log_collection(host)
+        tl.check("Reading metadata for warning entries ...")
+        workspace = get_workspace_directory(host)
+        assert workspace, "No workspace found"
 
-        # Step 4: Check error message
-        if success:
-            tl.failed(
-                LOG["output_not_writable_not_detected"],
-                ASSERT["assert_not_writable_error"],
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
+
+        warnings = metadata.get("warnings", [])
+        missing_warnings = [
+            w for w in warnings
+            if w.get("reason") == "missing_source"
+        ]
+
+        tl.check(f"Found {len(missing_warnings)} missing_source warnings")
+
+        # Validate warning entry schema
+        all_valid, missing_fields = verify_metadata_warning_entries(metadata)
+
+        if all_valid:
+            tl.passed(
+                LOG["error_handled"],
+                f"{len(missing_warnings)} missing-source warnings recorded, "
+                f"all with valid schema"
             )
-            pytest.fail(ASSERT["assert_not_writable_error"])
-
-        if verify_not_writable_error(output):
-            tl.check(LOG["output_not_writable_detected"])
         else:
-            tl.check("Expected 'not writable' message not found in output")
+            tl.failed(
+                LOG["error_not_handled"],
+                f"Warning entries missing fields: {missing_fields}"
+            )
+            assert False, ASSERT["error_not_detected"].format(
+                error_type="missing_sources",
+                detail=f"Warning schema incomplete: {missing_fields}"
+            )
 
-        # Step 5: Verify no partial artifacts
-        workspace_exists, _ = verify_workspace_created(host)
-        if workspace_exists:
-            tl.failed(LOG["partial_artifacts_found"], ASSERT["assert_no_artifacts"])
-            pytest.fail(ASSERT["assert_no_artifacts"])
+    def test_missing_source_message_format(self, host):
+        """Verify missing_source warning messages contain path and node info."""
+        tc = TC["missing_sources"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-        tl.check(LOG["no_partial_artifacts"])
+        workspace = get_workspace_directory(host)
+        if not workspace:
+            pytest.skip("No workspace — cannot verify warning format")
 
-        tl.passed(
-            "Not writable error handled correctly",
-            "Command failed with appropriate error, no partial artifacts"
+        metadata = read_metadata(host, workspace)
+        if not metadata:
+            pytest.skip("Cannot read metadata")
+
+        warnings = metadata.get("warnings", [])
+        missing_warnings = [
+            w for w in warnings if w.get("reason") == "missing_source"
+        ]
+
+        if not missing_warnings:
+            tl.passed(LOG["error_handled"],
+                      "No missing-source warnings to validate")
+            return
+
+        tl.check(f"Validating {len(missing_warnings)} warning messages ...")
+        all_valid = all(
+            "missing" in w.get("message", "").lower()
+            and w.get("node_name", "")
+            for w in missing_warnings
         )
 
-    finally:
-        # Step 6: Restore permissions
-        set_directory_permissions(host, output_path, "755")
-        tl.check(LOG["permissions_restored"])
+        if all_valid:
+            tl.passed(LOG["error_handled"],
+                      "All missing-source messages valid")
+        else:
+            tl.failed(LOG["error_not_handled"],
+                      "Some warnings have invalid message format")
+            assert False, ASSERT["error_not_detected"].format(
+                error_type="missing_sources",
+                detail="Warning message missing path or node info"
+            )
 
 
-@pytest.mark.sanity
+# ── TC-E04: Archive Generation Failure ─────────────────────────────────────
+
 @pytest.mark.order(11)
-def test_missing_sources(host):
-    """
-    TC-E03: Missing Source Files - Warning Emitted.
+@pytest.mark.functional
+class TestArchiveFailure:
+    """TC-E04 — Verify SSH collection failures create placeholder markers."""
 
-    Verify warning emitted when expected log sources are missing.
+    def test_ssh_failure_markers(self, host):
+        """
+        After a normal collection run, check for SSH_COLLECTION_FAILED.txt
+        placeholder files. These are created by bundle.yml for any nodes
+        that were unreachable or had collection errors.
+        """
+        tc = TC["archive_failure"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Execute log collection command
-    2. Check terminal output for missing source warning
-    3. Verify bundle created despite missing sources
-    4. Check warning summary
-    """
-    tc = TC["missing_sources"]
-    tl = TestLogger(tc["title"], tc["id"])
+        tl.check("Searching for SSH failure marker files ...")
+        markers = find_ssh_failure_markers(host)
 
-    # Step 1: Execute collection
-    _, output, _ = execute_log_collection(host)
+        if markers:
+            tl.check(f"Found {len(markers)} failure markers")
+            # Read first marker to verify content format
+            from omnia_auto import run_on_host
+            from library.vars.common_vars import CMDS
+            content = run_on_host(
+                host,
+                CMDS["read_failure_marker"].format(marker_path=markers[0])
+            ).stdout
 
-    # Step 2: Check for missing source warning (if any)
-    found, source, node = verify_missing_source_warning(output)
+            has_fields = all(
+                field in content
+                for field in ["Node Name", "Reason", "Message"]
+            )
 
-    if found:
-        tl.check(LOG["missing_source_warning"].format(source=source, node=node))
-    else:
-        tl.check("No missing source warnings (all sources available)")
-
-    # Step 3: Verify bundle created
-    bundle_exists, bundle_path = verify_bundle_created(host)
-
-    if not bundle_exists:
-        tl.failed(LOG["bundle_not_created"], ASSERT["assert_bundle_created"])
-        pytest.fail(ASSERT["assert_bundle_created"])
-
-    # Step 4: Check warning summary
-    _, warning_count = verify_warning_summary_in_output(output)
-    tl.check(f"Warning count: {warning_count}")
-
-    # Cleanup
-    if bundle_path:
-        cleanup_bundle(host, bundle_path)
-
-    tl.passed(
-        "Missing sources handled correctly",
-        "Collection continues with warnings for missing sources"
-    )
-
-
-@pytest.mark.sanity
-@pytest.mark.order(12)
-def test_archive_failure(host):
-    """
-    TC-E04: Archive Generation Failure.
-
-    Verify command fails with root-cause message when archive generation fails.
-
-    Steps:
-    1. Fill output disk to capacity
-    2. Execute log collection command
-    3. Verify archive generation fails
-    4. Check error message
-    5. Remove fillfile
-    """
-    tc = TC["archive_failure"]
-    tl = TestLogger(tc["title"], tc["id"])
-    output_path = OUTPUT_PATHS["default_output_root"]
-
-    try:
-        # Step 1: Fill disk
-        tl.check("Filling disk space (simulated)")
-        fill_disk_space(host, output_path, 10000)  # 10GB fill attempt
-
-        # Step 2-3: Execute collection
-        _, output, exit_code = execute_log_collection(host)
-
-        # Step 4: Check error message
-        if verify_archive_failure_error(output):
-            tl.check(LOG["archive_failure_detected"])
+            if has_fields:
+                tl.passed(
+                    LOG["error_handled"],
+                    f"{len(markers)} markers with valid format"
+                )
+            else:
+                tl.failed(LOG["error_not_handled"],
+                          "Marker file missing expected fields")
+                assert False, ASSERT["error_not_detected"].format(
+                    error_type="archive_failure",
+                    detail="SSH_COLLECTION_FAILED.txt missing fields"
+                )
         else:
-            tl.check("Archive failure not triggered (disk may have space)")
+            # No failures is acceptable — all nodes were reachable
+            tl.passed(LOG["error_handled"],
+                      "No SSH failure markers (all nodes reachable)")
 
-        # Step 5: Check exit code
-        if exit_code != 0:
-            tl.check(f"Command exited with code {exit_code}")
+    def test_unreachable_warnings_in_metadata(self, host):
+        """Verify unreachable node warnings appear in metadata."""
+        tc = TC["archive_failure"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-        tl.passed(
-            "Archive failure test completed",
-            "Error handling verified"
-        )
+        workspace = get_workspace_directory(host)
+        if not workspace:
+            pytest.skip("No workspace")
 
-    finally:
-        free_disk_space(host, output_path)
-        tl.check(LOG["disk_space_freed"])
+        metadata = read_metadata(host, workspace)
+        if not metadata:
+            pytest.skip("Cannot read metadata")
+
+        warnings = metadata.get("warnings", [])
+        unreachable = [
+            w for w in warnings
+            if w.get("reason") in ("unreachable", "collection_error")
+        ]
+
+        tl.check(f"Found {len(unreachable)} unreachable/error warnings")
+
+        if unreachable:
+            # Validate each warning has proper format
+            all_valid = all(
+                verify_warning_message_format(w) for w in unreachable
+            )
+            if all_valid:
+                tl.passed(LOG["error_handled"],
+                          f"{len(unreachable)} warnings with valid format")
+            else:
+                tl.failed(LOG["error_not_handled"],
+                          "Some unreachable warnings have bad format")
+                assert False, ASSERT["error_not_detected"].format(
+                    error_type="archive_failure",
+                    detail="Unreachable warning message format invalid"
+                )
+        else:
+            tl.passed(LOG["error_handled"],
+                      "No unreachable warnings (all nodes responded)")

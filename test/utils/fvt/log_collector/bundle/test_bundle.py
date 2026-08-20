@@ -13,259 +13,308 @@
 # limitations under the License.
 
 """
-Log Collector — Bundle, Hash, and Output Tests
+FVT — Bundle Construction, Hash, and Completion Output
 
-TC-F04: Bundle Construction with Deterministic Naming
-TC-F05: Integrity Hash Generation
-TC-F06: User-Facing Completion Output
+Verifies that the bundle stage (bundle.yml) produces:
+- A deterministically-named tarball: omnia_logs_<YYYYMMDD-HHMMSS>.tar.gz
+- Subdirectories for k8s/ and slurm/ containing per-node log directories
+- A valid SHA256 hash matching the metadata.json tar_sha256 field
+- A completion summary with workspace, bundle, SHA256, mode, and warnings
 
-Reference: TCASES-LOGEX-2026-001 (v1.0.0)
+Tests:
+    TC-F04  Bundle Construction with Deterministic Naming
+    TC-F05  Integrity Hash Generation
+    TC-F06  User-Facing Completion Output
 """
 
-import os
-import time
-
 import pytest
+from omnia_auto import TestLogger
 
-from library.functions import TestLogger
+from library.vars import TEST_CASES as TC
 from library.functions.log_collector_func import (
-    execute_log_collection,
+    compute_sha256,
+    get_bundle_path,
+    get_workspace_directory,
+    list_bundle_contents,
+    parse_collect_ini,
+    read_metadata,
+    verify_bundle_contains_node_logs,
+    verify_bundle_contains_subdirs,
     verify_bundle_created,
     verify_bundle_name_format,
-    list_bundle_contents,
-    compute_sha256,
+    verify_completion_summary,
     verify_hash_format,
-    verify_hash_in_output,
     verify_hash_match,
-    verify_output_contains_path,
-    verify_path_is_absolute,
-    verify_warning_summary_in_output,
 )
-from library.vars import TEST_CASES as TC
-from library.vars.common_vars import SHA256_CONFIG
 from library.messages import (
     TEST_LOG_MSGS as LOG,
     TEST_ASSERT_MSGS as ASSERT,
 )
 
 
-# Shared state from TC-F01 / TC-F02 (populated by collection tests)
-_bundle_result = {
-    "bundle": None,
-    "output": "",
-    "hash": None,
-}
+# ── Shared fixtures ─────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def workspace(host):
+    """Locate the most recent workspace run folder."""
+    return get_workspace_directory(host)
 
 
-def _ensure_bundle(host):
-    """Run collection if bundle not already present."""
-    bundle_exists, bundle_path = verify_bundle_created(host)
-    if bundle_exists:
-        _bundle_result["bundle"] = bundle_path
-        return bundle_path
-
-    _, output, _ = execute_log_collection(host, mode="full")
-    _bundle_result["output"] = output
-    _, bundle_path = verify_bundle_created(host)
-    _bundle_result["bundle"] = bundle_path
-    return bundle_path
+@pytest.fixture(scope="module")
+def bundle_path(host):
+    """Locate the most recent bundle archive."""
+    return get_bundle_path(host)
 
 
-@pytest.mark.sanity
+@pytest.fixture(scope="module")
+def parsed_inventory(host):
+    """Parse collect.ini for node verification."""
+    return parse_collect_ini(host)
+
+
+# ── TC-F04: Bundle Construction with Deterministic Naming ───────────────────
+
 @pytest.mark.order(4)
-def test_bundle_construction(host):
-    """
-    TC-F04: Bundle Construction with Deterministic Naming.
+@pytest.mark.functional
+class TestBundleConstruction:
+    """TC-F04 — Verify bundle is created with correct naming and contents."""
 
-    Verify gzip tar archive created with timestamped naming format.
+    def test_bundle_exists(self, host, bundle_path):
+        """Verify the tar.gz bundle was created."""
+        tc = TC["bundle_construction"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Verify bundle filename format
-    2. Verify tar.gz archive is readable
-    3. Verify archive placed in output location
-    """
-    tc = TC["bundle_construction"]
-    tl = TestLogger(tc["title"], tc["id"])
+        tl.check("Verifying bundle archive exists ...")
+        exists, path = verify_bundle_created(host)
 
-    bundle_path = _ensure_bundle(host)
-    if not bundle_path:
-        tl.failed(LOG["bundle_not_created"], ASSERT["assert_bundle_created"])
-        pytest.fail(ASSERT["assert_bundle_created"])
+        if exists:
+            tl.passed(LOG["bundle_ok"], f"Bundle: {path}")
+        else:
+            tl.failed(LOG["bundle_failed"], "No bundle archive found")
+            assert False, ASSERT["bundle_not_created"].format(
+                detail="tar.gz bundle not found in output directory"
+            )
 
-    # Step 1: Verify bundle filename format
-    if not verify_bundle_name_format(bundle_path):
-        tl.failed(
-            LOG["bundle_name_invalid"].format(name=bundle_path),
-            ASSERT["assert_bundle_name_format"].format(name=bundle_path),
+    def test_bundle_name_format(self, host, bundle_path):
+        """Verify bundle name matches omnia_logs_<YYYYMMDD-HHMMSS>.tar.gz."""
+        tc = TC["bundle_construction"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Verifying bundle name format ...")
+        assert bundle_path, "No bundle path"
+
+        valid = verify_bundle_name_format(bundle_path)
+        if valid:
+            tl.passed(LOG["bundle_ok"], f"Format valid: {bundle_path}")
+        else:
+            tl.failed(LOG["bundle_failed"], f"Invalid name: {bundle_path}")
+            assert False, ASSERT["bundle_not_created"].format(
+                detail=f"Bundle name does not match expected format: {bundle_path}"
+            )
+
+    def test_bundle_contains_log_subdirs(self, host, bundle_path, parsed_inventory):
+        """Verify bundle contains k8s/ and/or slurm/ subdirectories."""
+        tc = TC["bundle_construction"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Checking bundle subdirectories ...")
+        assert bundle_path, "No bundle path"
+
+        subdirs = verify_bundle_contains_subdirs(host, bundle_path)
+        has_k8s_nodes = any(
+            parsed_inventory.get(s) for s in ["k8s_control_node", "k8s_worker_node"]
         )
-        pytest.fail(ASSERT["assert_bundle_name_format"].format(name=bundle_path))
+        has_slurm_nodes = any(
+            parsed_inventory.get(s)
+            for s in ["slurm_control_node", "slurm_node",
+                      "login_node", "login_compiler_node"]
+        )
 
-    tl.check(LOG["bundle_name_valid"])
+        ok = True
+        details = []
+        if has_k8s_nodes and not subdirs.get("k8s"):
+            ok = False
+            details.append("k8s/ missing but k8s nodes configured")
+        if has_slurm_nodes and not subdirs.get("slurm"):
+            ok = False
+            details.append("slurm/ missing but slurm nodes configured")
 
-    # Step 2: Verify archive is readable
-    contents = list_bundle_contents(host, bundle_path)
+        if ok:
+            tl.passed(LOG["bundle_ok"], f"Subdirs: {subdirs}")
+        else:
+            tl.failed(LOG["bundle_failed"], "; ".join(details))
+            assert False, ASSERT["bundle_not_created"].format(
+                detail="; ".join(details)
+            )
 
-    if not contents:
-        tl.failed(LOG["bundle_corrupted"], ASSERT["assert_bundle_readable"])
-        pytest.fail(ASSERT["assert_bundle_readable"])
+    def test_bundle_contains_node_logs(self, host, bundle_path, parsed_inventory):
+        """Verify bundle contains per-node directories for populated groups."""
+        tc = TC["bundle_construction"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    tl.check(LOG["bundle_readable"])
+        tl.check("Checking per-node log directories in bundle ...")
+        assert bundle_path, "No bundle path"
 
-    # Step 3: Verify contents include logs
-    tl.check("Bundle contains collected logs (k8s, slurm)")
+        node_results = verify_bundle_contains_node_logs(
+            host, bundle_path, parsed_inventory
+        )
 
-    tl.check(LOG["bundle_created"].format(bundle=bundle_path))
-    tl.passed(
-        "Bundle construction successful",
-        f"Archive created with correct format: {os.path.basename(bundle_path)}"
-    )
+        if not node_results:
+            tl.passed(LOG["bundle_ok"], "No populated groups to verify")
+            return
+
+        all_found = all(node_results.values())
+        if all_found:
+            tl.passed(LOG["bundle_ok"],
+                      f"All groups found: {list(node_results.keys())}")
+        else:
+            missing = [k for k, v in node_results.items() if not v]
+            tl.failed(LOG["bundle_failed"],
+                      f"Missing node dirs for: {missing}")
+            assert False, ASSERT["bundle_not_created"].format(
+                detail=f"Node log directories missing for groups: {missing}"
+            )
+
+    def test_bundle_nonempty(self, host, bundle_path):
+        """Verify bundle archive is not empty."""
+        tc = TC["bundle_construction"]
+        tl = TestLogger(tc["title"], tc["id"])
+
+        tl.check("Verifying bundle is non-empty ...")
+        assert bundle_path, "No bundle path"
+
+        contents = list_bundle_contents(host, bundle_path)
+        if len(contents) > 0:
+            tl.passed(LOG["bundle_ok"], f"{len(contents)} entries in archive")
+        else:
+            tl.failed(LOG["bundle_failed"], "Archive is empty")
+            assert False, ASSERT["bundle_not_created"].format(
+                detail="tar.gz archive contains 0 entries"
+            )
 
 
-@pytest.mark.sanity
+# ── TC-F05: Integrity Hash Generation ──────────────────────────────────────
+
 @pytest.mark.order(5)
-def test_hash_generation(host):
-    """
-    TC-F05: Integrity Hash Generation.
+@pytest.mark.functional
+class TestHashGeneration:
+    """TC-F05 — Verify SHA256 hash is generated and matches the bundle."""
 
-    Verify SHA256 computed for bundle and matches independent recomputation.
+    def test_metadata_has_sha256(self, host, workspace):
+        """Verify metadata.json contains a non-empty tar_sha256 field."""
+        tc = TC["hash_generation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    Steps:
-    1. Verify SHA256 hash in output
-    2. Check hash format
-    3. Recompute SHA256 independently
-    4. Compare generated hash with recomputed hash
-    5. Verify hash generation time
-    """
-    tc = TC["hash_generation"]
-    tl = TestLogger(tc["title"], tc["id"])
+        tl.check("Reading tar_sha256 from metadata.json ...")
+        assert workspace, "No workspace"
 
-    bundle_path = _bundle_result.get("bundle")
-    output = _bundle_result.get("output", "")
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
 
-    # Re-run if no output captured yet
-    if not bundle_path:
-        bundle_path = _ensure_bundle(host)
-    if not output and bundle_path:
-        _, output, _ = execute_log_collection(host, mode="full")
-        _bundle_result["output"] = output
-        _, bundle_path = verify_bundle_created(host)
-        _bundle_result["bundle"] = bundle_path
+        sha256 = metadata.get("tar_sha256", "")
+        if sha256 and verify_hash_format(sha256):
+            tl.passed(LOG["hash_ok"], f"SHA256: {sha256[:16]}...")
+        else:
+            tl.failed(LOG["hash_failed"], f"Invalid SHA256: '{sha256}'")
+            assert False, ASSERT["hash_mismatch"].format(
+                metadata_hash=sha256 or "(empty)",
+                computed_hash="(not computed)",
+                detail="tar_sha256 field empty or invalid format"
+            )
 
-    if not bundle_path:
-        tl.skipped("Bundle not available", "TC-F04 must pass first")
-        pytest.skip("TC-F04 must pass first")
+    def test_hash_matches_bundle(self, host, workspace, bundle_path):
+        """Verify SHA256 in metadata matches actual bundle checksum."""
+        tc = TC["hash_generation"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    # Step 1: Verify hash in output
-    generated_hash = verify_hash_in_output(output)
+        tl.check("Computing SHA256 and comparing ...")
+        assert workspace, "No workspace"
+        assert bundle_path, "No bundle path"
 
-    if not generated_hash:
-        tl.failed(LOG["hash_not_generated"], ASSERT["assert_hash_generated"])
-        pytest.fail(ASSERT["assert_hash_generated"])
+        metadata = read_metadata(host, workspace)
+        assert metadata, "Could not read metadata"
 
-    tl.check(LOG["hash_generated"].format(hash=generated_hash[:16] + "..."))
-    _bundle_result["hash"] = generated_hash
+        metadata_hash = metadata.get("tar_sha256", "")
+        computed_hash = compute_sha256(host, bundle_path) or ""
 
-    # Step 2: Check hash format
-    if not verify_hash_format(generated_hash):
-        tl.failed(
-            LOG["hash_format_invalid"].format(hash=generated_hash),
-            ASSERT["assert_hash_format"],
-        )
-        pytest.fail(ASSERT["assert_hash_format"])
-
-    tl.check(LOG["hash_format_valid"])
-
-    # Step 3-4: Recompute and compare
-    start_time = time.time()
-    computed_hash = compute_sha256(host, bundle_path)
-    elapsed_time = time.time() - start_time
-
-    if not computed_hash:
-        tl.failed("Failed to compute SHA256", ASSERT["assert_hash_generated"])
-        pytest.fail(ASSERT["assert_hash_generated"])
-
-    if not verify_hash_match(generated_hash, computed_hash):
-        tl.failed(
-            LOG["hash_mismatch"].format(generated=generated_hash, computed=computed_hash),
-            ASSERT["assert_hash_match"].format(generated=generated_hash, computed=computed_hash),
-        )
-        pytest.fail(ASSERT["assert_hash_match"].format(
-            generated=generated_hash, computed=computed_hash,
-        ))
-
-    tl.check(LOG["hash_match"])
-
-    # Step 5: Verify timing
-    max_time = SHA256_CONFIG["max_compute_time_seconds"]
-    if elapsed_time > max_time:
-        tl.check(LOG["hash_timeout"].format(timeout=max_time))
-
-    tl.passed(
-        "Hash generation successful",
-        f"SHA256 verified in {elapsed_time:.1f}s"
-    )
+        if metadata_hash and computed_hash and verify_hash_match(
+            metadata_hash, computed_hash
+        ):
+            tl.passed(LOG["hash_ok"], "Metadata hash matches bundle")
+        else:
+            tl.failed(LOG["hash_failed"],
+                      f"Mismatch: meta={metadata_hash[:16]}... "
+                      f"vs computed={computed_hash[:16]}...")
+            assert False, ASSERT["hash_mismatch"].format(
+                metadata_hash=metadata_hash,
+                computed_hash=computed_hash,
+                detail="SHA256 in metadata.json does not match "
+                       "the actual bundle checksum"
+            )
 
 
-@pytest.mark.sanity
+# ── TC-F06: User-Facing Completion Output ──────────────────────────────────
+
 @pytest.mark.order(6)
-def test_completion_output(host):  # pylint: disable=unused-argument
-    """
-    TC-F06: User-Facing Completion Output.
+@pytest.mark.functional
+class TestCompletionOutput:
+    """TC-F06 — Verify the completion summary block in playbook output."""
 
-    Verify workspace path, bundle path, SHA256, and warning summary
-    printed in clear, copy-paste-ready format.
+    @pytest.fixture(autouse=True, scope="class")
+    def _run_collection(self, host, request):
+        """Execute collection and store output for the class."""
+        success, output, rc = execute_log_collection(host, mode="full")
+        request.cls.output = output
+        request.cls.success = success
 
-    Steps:
-    1. Check terminal output for workspace path
-    2. Check terminal output for bundle path
-    3. Check terminal output for SHA256
-    4. Check terminal output for warning summary
-    """
-    tc = TC["completion_output"]
-    tl = TestLogger(tc["title"], tc["id"])
+    def test_completion_summary_present(self, host):
+        """Verify 'OMNIA LOG COLLECTION COMPLETE' banner appears."""
+        tc = TC["completion_output"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    output = _bundle_result.get("output", "")
-
-    if not output:
-        tl.skipped("No output available", "TC-F01 must pass first")
-        pytest.skip("TC-F01 must pass first")
-
-    # Step 1: Check workspace path
-    workspace_found, workspace_path = verify_output_contains_path(output, "workspace")
-
-    if workspace_found:
-        if verify_path_is_absolute(workspace_path):
-            tl.check(LOG["output_workspace_path"])
-            tl.check(LOG["output_paths_absolute"])
+        tl.check("Checking for completion banner ...")
+        if "OMNIA LOG COLLECTION COMPLETE" in self.output:
+            tl.passed(LOG["output_ok"], "Completion banner present")
         else:
-            tl.check(LOG["output_paths_relative"])
-    else:
-        tl.check("Workspace path not found in output")
+            tl.failed(LOG["output_failed"], "Banner not found")
+            assert False, ASSERT["output_incomplete"].format(
+                detail="'OMNIA LOG COLLECTION COMPLETE' not in output"
+            )
 
-    # Step 2: Check bundle path
-    bundle_found, bundle_path = verify_output_contains_path(output, "bundle")
+    def test_completion_fields(self, host):
+        """Verify completion summary contains workspace, bundle, SHA256."""
+        tc = TC["completion_output"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    if bundle_found:
-        if verify_path_is_absolute(bundle_path):
-            tl.check(LOG["output_bundle_path"])
+        tl.check("Parsing completion summary fields ...")
+        fields = verify_completion_summary(self.output)
+
+        missing = [k for k, v in fields.items() if v is None]
+
+        if not missing:
+            tl.passed(LOG["output_ok"],
+                      f"All fields present: {list(fields.keys())}")
         else:
-            tl.check(LOG["output_paths_relative"])
-    else:
-        tl.check("Bundle path not found in output")
+            tl.failed(LOG["output_failed"],
+                      f"Missing fields: {missing}")
+            assert False, ASSERT["output_incomplete"].format(
+                detail=f"Completion summary missing: {missing}"
+            )
 
-    # Step 3: Check SHA256
-    hash_value = verify_hash_in_output(output)
-    if hash_value:
-        tl.check(LOG["output_sha256"])
-    else:
-        tl.check("SHA256 not found in output")
+    def test_completion_sha256_format(self, host):
+        """Verify SHA256 in completion summary is 64-char hex."""
+        tc = TC["completion_output"]
+        tl = TestLogger(tc["title"], tc["id"])
 
-    # Step 4: Check warning summary
-    has_warnings, _ = verify_warning_summary_in_output(output)
-    if has_warnings:
-        tl.check(LOG["output_warning_summary"])
+        tl.check("Verifying SHA256 format in summary ...")
+        fields = verify_completion_summary(self.output)
+        sha = fields.get("sha256", "")
 
-    tl.passed(
-        "Completion output verified",
-        "Output contains required information"
-    )
+        if sha and verify_hash_format(sha):
+            tl.passed(LOG["output_ok"], f"SHA256: {sha[:16]}...")
+        else:
+            tl.failed(LOG["output_failed"],
+                      f"Invalid SHA256 in summary: '{sha}'")
+            assert False, ASSERT["output_incomplete"].format(
+                detail=f"SHA256 in completion summary invalid: '{sha}'"
+            )

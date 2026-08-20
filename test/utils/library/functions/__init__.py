@@ -15,92 +15,79 @@
 """
 Utils — Functions
 
-Common utilities come from the omnia_auto package.
-Module-specific functions remain here.
+All verification, collection, and helper functions.
 """
 
-# --- Common (from omnia_auto package) ---
-from omnia_auto import (
-    Colors,
-    Symbols,
-    log,
-    set_debug_mode,
-    TestLogger,
-    get_test_output,
-    get_testinfra_host,
-    load_test_config,
-    load_test_credentials,
-    get_module_root,
-    run_on_host,
-    is_local_execution,
-    TestReport,
-    get_current_report,
-    set_current_report,
-    run_playbook as _run_playbook,
-)
-from ..vars.common_vars import PLAYBOOK_ENTRY_POINT, PLAYBOOK_WORKDIR
-
-# --- Host utilities ---
-from .host_func import (
-    sync_project_to_remote,
-    sync_utils_input,
-)
-
-# --- Log collector verification ---
 from .log_collector_func import (
+    # Collect.ini / Inventory
+    parse_collect_ini,
+    verify_collect_ini_exists,
+    verify_collect_ini_sections,
+    verify_collect_ini_has_nodes,
+    get_populated_groups,
+    # Collection Execution
     execute_log_collection,
     verify_collection_started,
+    verify_inventory_parsed,
+    verify_dynamic_hosts_added,
     check_target_connectivity,
+    # Workspace
     get_workspace_directory,
     verify_workspace_created,
+    verify_workspace_subdirs,
+    # Bundle
     get_bundle_path,
     verify_bundle_created,
     verify_bundle_name_format,
     extract_bundle,
     list_bundle_contents,
-    verify_bundle_contains_file,
+    verify_bundle_contains_subdirs,
+    verify_bundle_contains_node_logs,
+    # Metadata
     read_metadata,
     verify_metadata_exists,
     verify_metadata_valid_json,
     verify_metadata_required_fields,
+    verify_metadata_collection_mode,
     verify_metadata_warning_entries,
     verify_warning_message_format,
+    # Hash
     compute_sha256,
     verify_hash_format,
     verify_hash_in_output,
     verify_hash_match,
-    verify_output_contains_path,
+    # Output Verification
+    verify_completion_summary,
     verify_path_is_absolute,
     verify_warning_summary_in_output,
+    # Error / Warning
     set_directory_permissions,
     verify_not_writable_error,
     verify_archive_failure_error,
     verify_unreachable_node_warning,
     verify_missing_source_warning,
+    find_ssh_failure_markers,
+    # Test File Management
     create_temp_test_files,
     create_stale_test_file,
     cleanup_test_files,
     fill_disk_space,
     free_disk_space,
+    # Idempotency
     get_bundle_content_checksum,
     compare_bundle_contents,
+    # Cleanup
     cleanup_workspace,
     cleanup_bundle,
 )
 
-# --- Validation ---
+from .host_func import (
+    sync_project_to_remote,
+    sync_utils_input,
+)
+
 from .validation_func import (
     validate_test_config,
     validate_all,
     ConfigValidationError,
 )
-
-
-def run_playbook(tag=None, **kwargs):
-    """Wrapper that injects module-specific playbook and workdir."""
-    return _run_playbook(
-        playbook=kwargs.pop("playbook", PLAYBOOK_ENTRY_POINT),
-        playbook_workdir=kwargs.pop("playbook_workdir", PLAYBOOK_WORKDIR),
-        tag=tag,
-        **kwargs,
-    )
