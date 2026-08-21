@@ -119,6 +119,7 @@ class TestCollectionInvocation:
                 detail="collect.ini has no node IPs in any section"
             )
 
+    @pytest.mark.requires_playbook
     def test_playbook_execution(self, host, collection_result):
         """Verify ansible-playbook collect.yml executes successfully."""
         tc = TC["collection_invocation"]
@@ -137,6 +138,7 @@ class TestCollectionInvocation:
                 detail=f"Playbook exit code: {collection_result['rc']}"
             )
 
+    @pytest.mark.requires_playbook
     def test_inventory_parsed(self, host, collection_result):
         """Verify the INI inventory was parsed during playbook execution."""
         tc = TC["collection_invocation"]
@@ -161,6 +163,7 @@ class TestCollectionInvocation:
 class TestSourceCollection:
     """TC-F02 — Verify source collection and warning accumulation."""
 
+    @pytest.mark.requires_playbook
     def test_workspace_created(self, host, collection_result):
         """Verify workspace directory was created after collection."""
         tc = TC["source_collection"]
@@ -177,6 +180,7 @@ class TestSourceCollection:
                 detail="Workspace directory not created after collection"
             )
 
+    @pytest.mark.requires_playbook
     def test_warning_count_in_output(self, host, collection_result):
         """Verify warning count appears in completion summary."""
         tc = TC["source_collection"]
