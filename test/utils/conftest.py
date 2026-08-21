@@ -60,6 +60,7 @@ from omnia_auto import (
 
 # --- Module-specific functions ---
 from library.functions.host_func import (
+    run_domain_init,
     sync_project_to_remote,
     sync_utils_input,
 )
@@ -271,6 +272,15 @@ def pytest_sessionstart(session):
             log(sync_result["details"], "OK")
         else:
             log(f"Input sync failed: {sync_result['error']}", "ERROR")
+
+    # Run domain-init.sh to initialize the utils domain
+    # This copies collect.ini to the correct location for the playbook
+    if not is_local_execution():
+        init_result = run_domain_init(host)
+        if init_result["success"]:
+            log(init_result["details"], "OK")
+        else:
+            log(f"Domain init failed: {init_result['error']}", "WARN")
 
     # Initialize test report
     # Detect scenario name from test paths (fvt/<scenario>/...)

@@ -82,6 +82,7 @@ from .log_collector_func import (
 )
 
 from .host_func import (
+    run_domain_init,
     sync_project_to_remote,
     sync_utils_input,
 )

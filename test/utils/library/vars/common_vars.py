@@ -97,10 +97,11 @@ PLAYBOOK_STAGES = [
 # COLLECT.INI — NODE INVENTORY (aligned with src/utils/input/collect.ini)
 # =============================================================================
 
-# Path to the INI inventory file on the OIM server
+# Path to the INI inventory file on the OIM server (after domain-init.sh)
+# domain-init.sh copies from src/utils/input/ to this location
 COLLECT_INI_PATH = "/opt/omnia/utils/input/project_default/collect.ini"
 
-# Source INI file in the repo (before omnia.sh --init copies it)
+# Source INI file in the repo (before domain-init.sh copies it)
 COLLECT_INI_SRC = os.path.join(SRC_INPUT_DIR, "collect.ini")
 
 # Supported functional group sections in collect.ini

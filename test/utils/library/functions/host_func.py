@@ -126,3 +126,37 @@ def sync_utils_input(host) -> Dict[str, Any]:
         ip=conn["ip"], user=conn["user"],
         password=conn["password"], ssh_opts=conn["ssh_opts"],
     )
+
+
+def run_domain_init(host) -> Dict[str, Any]:
+    """Run domain-init.sh to initialize the utils domain on the target.
+
+    This script copies collect.ini from src/utils/input/ to
+    /opt/omnia/utils/input/<project>/collect.ini where the playbook reads it.
+
+    Args:
+        host: Testinfra host object
+
+    Returns:
+        Dict with success, details, and error keys
+    """
+    config = load_test_config()
+    clone_path = config.get("clone_path", "/opt/omnia")
+
+    domain_init_script = f"{clone_path}/src/utils/domain-init.sh"
+
+    cmd = f"bash {domain_init_script}"
+    result = run_on_host(host, cmd)
+
+    if result.rc == 0:
+        return {
+            "success": True,
+            "details": f"domain-init.sh completed successfully",
+            "error": "",
+        }
+    else:
+        return {
+            "success": False,
+            "details": "",
+            "error": f"domain-init.sh failed (rc={result.rc}): {result.stderr}",
+        }
