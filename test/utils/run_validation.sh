@@ -551,6 +551,7 @@ case "$COMMAND" in
         export OMNIA_COMMAND_TYPE="verify"
         test_path=$(build_test_path "${SCENARIO_DIR}")
         extra_args=$(build_pytest_args "yes")
+        extra_args="${extra_args} -m 'not requires_playbook'"
 
         run_pytest \
             "${test_path}" \

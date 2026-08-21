@@ -33,6 +33,7 @@ from omnia_auto import TestLogger
 from library.vars import TEST_CASES as TC
 from library.functions.log_collector_func import (
     compute_sha256,
+    execute_log_collection,
     get_bundle_path,
     get_workspace_directory,
     list_bundle_contents,
@@ -257,6 +258,7 @@ class TestHashGeneration:
 
 @pytest.mark.order(6)
 @pytest.mark.functional
+@pytest.mark.requires_playbook
 class TestCompletionOutput:
     """TC-F06 — Verify the completion summary block in playbook output."""
 

@@ -55,6 +55,7 @@ from library.messages import (
 
 @pytest.mark.order(7)
 @pytest.mark.functional
+@pytest.mark.requires_playbook
 class TestCuratedMode:
     """TC-C01 — Verify curated_support mode excludes temp/stale logs."""
 
@@ -144,6 +145,7 @@ class TestCuratedMode:
 
 @pytest.mark.order(8)
 @pytest.mark.functional
+@pytest.mark.requires_playbook
 class TestFullMode:
     """TC-C02 — Verify full/complete logs collection mode."""
 
