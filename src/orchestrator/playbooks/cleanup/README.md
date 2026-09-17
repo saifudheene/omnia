@@ -103,11 +103,13 @@ selected through the component cleanup playbook.
 
 Full cleanup removes only the two Orchestrator-owned credential artifacts:
 
-- `omnia_config_credentials.yml`
-- `.omnia_config_credentials_key`
+- `orchestrator_credentials.yml`
+- `.orchestrator_credentials_key`
 
 Both are under
-`$OMNIA_DATA_PATH/orchestrator/input/$OMNIA_PROJECT_NAME/`. User-provided
+`$ORCHESTRATOR_DATA_PATH/input/$OMNIA_PROJECT_NAME/`. When
+`ORCHESTRATOR_DATA_PATH` is unset, it resolves to
+`$OMNIA_DATA_PATH/orchestrator`. User-provided
 PowerScale CSI secret and values files and credentials owned by other domains
 are not removed.
 
@@ -243,7 +245,7 @@ Component behaviour is defined in two places:
 ## Troubleshooting
 
 **"storage_config.yml not found"** — ensure `storage_config.yml` exists under
-`$OMNIA_DATA_PATH/orchestrator/input/$OMNIA_PROJECT_NAME/`.
+`$ORCHESTRATOR_DATA_PATH/input/$OMNIA_PROJECT_NAME/`.
 
 **"cannot safely resolve ... storage_name"** — ensure the storage name in
 `omnia_config.yml` matches exactly one complete `mounts` entry in

@@ -18,6 +18,7 @@ from .common_vars import (
     OUTPUT_FILES,
     PULP_CONTAINER_NAME,
     PULP_PORT,
+    USER_REGISTRY_TIMEOUT,
 )
 from .domain_vars import (
     DOMAIN_NAME,
@@ -26,3 +27,4 @@ from .domain_vars import (
     SUITES,
     EXCLUDE_TAGS,
 )
+from .ut_test_case_vars import UT_TEST_CASE_IDS

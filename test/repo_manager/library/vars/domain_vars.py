@@ -40,6 +40,7 @@ FVT_TAGS: List[str] = [
     "execute",
     "status",
     "cleanup",
+    "cleanup_repos",
     "policy",
     "negative",
     "catalog",
@@ -55,9 +56,14 @@ MARKERS: List[str] = [
     "functional",
     "positive",
     "negative",
+    "destructive",
     "deploy",
     "x86_64",
     "aarch64",
+    "nft",
+    "performance",
+    "idempotency",
+    "security",
 ]
 
 # =====================================================================
@@ -65,15 +71,33 @@ MARKERS: List[str] = [
 # =====================================================================
 
 SUITES: Dict[str, List[str]] = {
-    "precheck": ["status"],
-    "prepare": ["status"],
-    "execute": ["status"],
-    "status": ["status"],
-    "cleanup": ["status"],
+    "precheck": [],
+    "prepare": [],
+    "execute": [],
+    "status": [],
+    "cleanup": [],
+    "cleanup_repos": [],
     "policy": [],
     "negative": ["error_scenarios"],
-    "catalog": ["catalog"],
+    "catalog": ["add", "delete", "generate", "negative", "validate"],
     "user_registry": [],
+}
+
+# Ordered, non-destructive lifecycle used by an untagged ``exec`` or ``test``.
+# Cleanup remains explicit-only and catalog mutation requires an exact suite.
+ALL_EXEC_TAGS: List[str] = ["precheck", "prepare", "execute", "status"]
+ALL_EXEC_MARKER: str = ""
+ALL_VERIFY_EXCLUDE_MARKERS: List[str] = ["negative", "destructive"]
+
+# These scenarios validate existing state and own no deployment trigger.
+VERIFY_ONLY_TAGS: List[str] = ["policy", "negative", "user_registry"]
+
+# Catalog operations are ambiguous without one exact operation suite. The
+# negative suite verifies validation behavior and never executes a playbook.
+REQUIRED_SUITE_TAGS: List[str] = ["catalog"]
+VERIFY_ONLY_SUITES: Dict[str, List[str]] = {"catalog": ["negative"]}
+SUITE_EXEC_OWNERS: Dict[str, List[str]] = {
+    "catalog": ["add", "delete", "generate", "validate"],
 }
 
 # =====================================================================
@@ -82,5 +106,5 @@ SUITES: Dict[str, List[str]] = {
 
 EXCLUDE_TAGS: List[str] = [
     "cleanup",
-    "negative",
+    "cleanup_repos",
 ]

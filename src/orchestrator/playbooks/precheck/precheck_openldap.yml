@@ -14,17 +14,16 @@
 ---
 
 # Precheck OpenLDAP --- Validate all OpenLDAP/authentication-related variables
-# Can be run standalone or imported by orchestrator.yml
+# Imported by the canonical orchestrator.yml entry point. Direct execution
+# requires orchestrator_setup facts to be supplied first.
 #
 # This playbook validates inputs without modifying the system.
 # Skipped entirely when openldap_support is false.
 #
 # Checks performed:
 #   1. Assert openldap_support feature flag is defined
-#   2. Assert LDAP credentials are available (when enabled)
-#   3. Assert container image settings are valid
-#   4. Assert domain_name is configured for LDAP base DN derivation
-#   5. Assert required ports are not blocked
+#   2. Assert domain_name is configured for LDAP base DN derivation
+#   3. Warn when the credential file is absent; prepare will collect it
 
 - name: Validate OpenLDAP prerequisites
   hosts: localhost
@@ -61,13 +60,13 @@
 
         - name: Check if credential file exists
           ansible.builtin.stat:
-            path: "{{ input_project_dir }}/omnia_config_credentials.yml"
+            path: "{{ input_project_dir }}/orchestrator_credentials.yml"
           register: _cred_file_check
 
         - name: Warn if credential file is missing (will be prompted during prepare)
           ansible.builtin.debug:
             msg: >-
-              Credential file not found at {{ input_project_dir }}/omnia_config_credentials.yml.
+              Credential file not found at {{ input_project_dir }}/orchestrator_credentials.yml.
               OpenLDAP credentials (openldap_db_username, openldap_db_password) will be
               prompted during the prepare phase.
           when: not _cred_file_check.stat.exists

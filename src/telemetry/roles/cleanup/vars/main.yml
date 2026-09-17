@@ -19,14 +19,17 @@
 
 # --- Shared cleanup settings ---
 telemetry_namespace: "telemetry"
-# Preserve persistent telemetry data unless the user explicitly requests deletion.
-# Both -e delete_volume=true and -e Delete_volume=true are accepted.
-_cleanup_delete_volume_enabled: >-
+# Preserve sink volumes (Kafka, VictoriaMetrics, VictoriaLogs) unless the user explicitly requests deletion.
+# Both -e delete_sinks_volume=true and -e Delete_sinks_volume=true are accepted.
+# Source volumes (iDRAC, LDMS, PowerScale, etc.) are always deleted.
+_cleanup_delete_sinks_volume_enabled: >-
   {{
-    (hostvars['localhost'] | default({}))['_cleanup_delete_volume']
-    | default(Delete_volume | default(delete_volume | default(false)))
+    (hostvars['localhost'] | default({}))['_cleanup_delete_sinks_volume']
+    | default(Delete_sinks_volume | default(delete_sinks_volume | default(false)))
     | bool
   }}
+_cleanup_preserve_sink_volumes: >-
+  {{ not (_cleanup_delete_sinks_volume_enabled | bool) }}
 cleanup_resource_grace_period: 0
 cleanup_post_delete_pause: 5
 cleanup_helm_timeout: "5m"
@@ -346,3 +349,35 @@ vast_resources:
   - { type: "service", name: "vast-external" }
   - { type: "vmservicescrape", name: "vast-storage-metrics" }
 vast_pod_label: "app=vast-external"
+
+# =============================================================================
+# Credential cleanup — component-to-credential-field mapping
+# =============================================================================
+# Maps each source component to its credential fields in telemetry_credentials.yml.
+# Used by cleanup_credentials.yml to blank component-specific fields during
+# individual cleanup, or to delete the entire file during complete cleanup.
+#
+# Components without credential fields (ome, kafka, victoria_metrics,
+# victoria_logs) are intentionally absent — they have no stored credentials.
+
+cleanup_credential_file_path: "{{ input_project_dir }}/telemetry_credentials.yml"
+cleanup_credential_vault_key_path: "{{ input_project_dir }}/.telemetry_credentials_key"
+
+cleanup_credential_fields:
+  idrac:
+    - bmc_username
+    - bmc_password
+    - mysqldb_user
+    - mysqldb_password
+    - mysqldb_root_password
+  ldms:
+    - ldms_sampler_password
+  powerscale:
+    - csi_username
+    - csi_password
+  ufm:
+    - ufm_username
+    - ufm_password
+  vast:
+    - vast_username
+    - vast_password

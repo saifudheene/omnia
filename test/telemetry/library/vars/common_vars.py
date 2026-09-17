@@ -421,6 +421,17 @@ CMDS = {
         " -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'"
         " 2>/dev/null"
     ),
+    "kubectl_get_kafka_ready_status": (
+        "kubectl get kafka kafka -n {namespace}"
+        " -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}'"
+        " 2>/dev/null"
+    ),
+
+    # --- VictoriaMetrics ---
+    "kubectl_get_vmcluster_update_status": (
+        "kubectl get vmcluster -n {namespace}"
+        " -o jsonpath='{{.items[0].status.updateStatus}}' 2>/dev/null"
+    ),
 
     # --- KafkaUser ---
     "kubectl_get_kafkauser": (
@@ -496,8 +507,8 @@ CMDS = {
     ),
     # --- iDRAC VictoriaMetrics data ---
     "vm_query_idrac_service_tag": (
-        "curl -s --max-time 15"
-        " 'http://{vmselect_ip}:{vmselect_port}"
+        "curl -sk --max-time 15"
+        " 'https://{vmselect_ip}:{vmselect_port}"
         "/select/0/prometheus/api/v1/query?query={encoded_query}'"
     ),
 
@@ -545,11 +556,20 @@ CMDS = {
         " {user}@{host}"
         " '{isi_cmd}'"
     ),
+    "powerscale_get_privileges": "isi auth privileges",
+    "powerscale_get_privileges_password": (
+        "sshpass -p %s ssh -o StrictHostKeyChecking=accept-new"
+        " -o PubkeyAuthentication=no -o ConnectTimeout=10 -- %s %s"
+    ),
 
     # --- Cleanup verification ---
     "kubectl_count_resources": (
         "kubectl get {resource} -n {namespace}"
         " --no-headers --ignore-not-found 2>/dev/null | wc -l"
+    ),
+    "kubectl_get_pvc_count": (
+        "kubectl get pvc -n {namespace}"
+        " --no-headers --ignore-not-found 2>/dev/null | grep {prefix} | wc -l"
     ),
     "kubectl_get_ns": (
         "kubectl get namespace {namespace}"

@@ -14,7 +14,8 @@
 ---
 
 # Prepare OpenLDAP --- Validate credentials and prepare configuration
-# Can be run standalone or imported by orchestrator.yml
+# Optional component-level entry point. The canonical orchestrator.yml route
+# performs the same idempotent preparation inside the deploy_openldap role.
 #
 # This playbook performs OpenLDAP preparation steps required before deployment.
 # No deployment or installation actions are performed here.
@@ -47,8 +48,8 @@
             name: orchestrator_common
             tasks_from: decrypt_include_encrypt.yml
           vars:
-            credential_file_path: "{{ hostvars['localhost']['input_project_dir'] }}/omnia_config_credentials.yml"
-            vault_password_file: "{{ hostvars['localhost']['input_project_dir'] }}/.omnia_config_credentials_key"
+            credential_file_path: "{{ hostvars['localhost']['input_project_dir'] }}/orchestrator_credentials.yml"
+            vault_password_file: "{{ hostvars['localhost']['input_project_dir'] }}/.orchestrator_credentials_key"
 
         - name: Assert OpenLDAP credentials are available
           ansible.builtin.assert:

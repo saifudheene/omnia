@@ -6,19 +6,23 @@
 """
 Repo Manager — Catalog Generate scenario verification tests.
 
-TC_RM_CAT_GEN_001: Verify catalog input directory exists
-TC_RM_CAT_GEN_002: Verify catalog file exists after generate
-TC_RM_CAT_GEN_003: Verify catalog structure is valid
-TC_RM_CAT_GEN_004: Verify catalog has functional layers
-TC_RM_CAT_GEN_005: Verify catalog has groups
-TC_RM_CAT_GEN_006: Verify catalog has packages
-TC_RM_CAT_GEN_007: Verify catalog log file exists
+RM_FVT_CATALOG_GENERATE_E001: Deploy the catalog_generate operation
+RM_FVT_CATALOG_GENERATE_V001: Verify catalog input directory exists
+RM_FVT_CATALOG_GENERATE_V002: Verify catalog file exists after generate
+RM_FVT_CATALOG_GENERATE_V003: Verify catalog structure is valid
+RM_FVT_CATALOG_GENERATE_V004: Verify catalog has functional layers
+RM_FVT_CATALOG_GENERATE_V005: Verify catalog has groups
+RM_FVT_CATALOG_GENERATE_V006: Verify catalog has packages
+RM_FVT_CATALOG_GENERATE_V007: Verify catalog log file exists
 """
+
+import os
 
 import pytest
 
 from library.functions import (
     TestLogger,
+    run_playbook,
     check_catalog_input_file_exists,
     check_catalog_file_exists,
     check_catalog_structure,
@@ -28,7 +32,6 @@ from library.functions import (
     check_catalog_log_file_exists,
 )
 from library.vars.common_vars import _get_input_path
-import os
 from library.messages import (
     TEST_NAMES,
     TEST_LOG_MSGS as LOG,
@@ -36,12 +39,39 @@ from library.messages import (
 )
 
 
+@pytest.mark.deploy
+@pytest.mark.sanity
+@pytest.mark.order(0)
+def test_catalog_generate_deploy(host):
+    """RM_FVT_CATALOG_GENERATE_E001: Deploy the catalog_generate operation."""
+    input_file = f"{_get_input_path()}/packages.txt"
+    if not host.file(input_file).exists:
+        pytest.skip(f"Catalog generate input file not found: {input_file}")
+
+    test_log = TestLogger(
+        TEST_NAMES["catalog_generate_deploy"], "RM_FVT_CATALOG_GENERATE_E001"
+    )
+    result = run_playbook(
+        tag="catalog_generate",
+        extra_vars={"input_file": input_file},
+    )
+    if result["success"]:
+        test_log.passed(
+            LOG["catalog_generate_ok"], result.get("details", "")
+        )
+    else:
+        test_log.failed(
+            LOG["catalog_generate_failed"], result.get("error", "")
+        )
+    assert result["success"], ASSERT["catalog_generate_must_succeed"]
+
+
 @pytest.mark.sanity
 @pytest.mark.positive
 @pytest.mark.order(0)
 def test_catalog_input_dir_exists(host):
-    """TC_RM_CAT_GEN_001: Verify catalog input directory exists."""
-    tl = TestLogger(TEST_NAMES["catalog_input_dir_exists"], "TC_RM_CAT_GEN_001")
+    """RM_FVT_CATALOG_GENERATE_V001: Verify catalog input directory exists."""
+    tl = TestLogger(TEST_NAMES["catalog_input_dir_exists"], "RM_FVT_CATALOG_GENERATE_V001")
     result = check_catalog_input_file_exists(host)
 
     if result["success"]:
@@ -56,9 +86,9 @@ def test_catalog_input_dir_exists(host):
 @pytest.mark.positive
 @pytest.mark.order(1)
 def test_catalog_file_exists(host):
-    """TC_RM_CAT_GEN_002: Verify catalog file exists after generate."""
-    tl = TestLogger(TEST_NAMES["catalog_file_exists"], "TC_RM_CAT_GEN_002")
-    
+    """RM_FVT_CATALOG_GENERATE_V002: Verify catalog file exists after generate."""
+    tl = TestLogger(TEST_NAMES["catalog_file_exists"], "RM_FVT_CATALOG_GENERATE_V002")
+
     # This test only makes sense if catalog_generate succeeded
     # If catalog file doesn't exist, it means generate didn't run
     result = check_catalog_file_exists(host)
@@ -66,11 +96,15 @@ def test_catalog_file_exists(host):
     if result["success"]:
         tl.passed(LOG["catalog_file_ok"], result["details"])
     else:
-        catalog_path = os.environ.get("CATALOG_FILE_PATH", "/opt/omnia/catalog/catalog_rhel.json")
-        tl.failed(LOG["catalog_file_missing"], 
-                 f"Catalog file not found at {catalog_path}\n"
-                 f"This test requires catalog_generate to complete successfully first.\n"
-                 f"Ensure the input file is provided and catalog_generate test passes.")
+        catalog_path = os.environ.get(
+            "CATALOG_FILE_PATH", "/opt/omnia/catalog/catalog_rhel.json"
+        )
+        tl.failed(
+            LOG["catalog_file_missing"],
+            f"Catalog file not found at {catalog_path}\n"
+            "This test requires catalog_generate to complete successfully "
+            "first.\nEnsure its input exists and the generate test passes.",
+        )
 
     assert result["success"], ASSERT["catalog_file_must_exist"]
 
@@ -79,8 +113,8 @@ def test_catalog_file_exists(host):
 @pytest.mark.positive
 @pytest.mark.order(2)
 def test_catalog_structure_valid(host):
-    """TC_RM_CAT_GEN_003: Verify catalog structure is valid."""
-    tl = TestLogger(TEST_NAMES["catalog_structure_valid"], "TC_RM_CAT_GEN_003")
+    """RM_FVT_CATALOG_GENERATE_V003: Verify catalog structure is valid."""
+    tl = TestLogger(TEST_NAMES["catalog_structure_valid"], "RM_FVT_CATALOG_GENERATE_V003")
     result = check_catalog_structure(host)
 
     if result["success"]:
@@ -95,8 +129,8 @@ def test_catalog_structure_valid(host):
 @pytest.mark.positive
 @pytest.mark.order(3)
 def test_catalog_functional_layers(host):
-    """TC_RM_CAT_GEN_004: Verify catalog has functional layers."""
-    tl = TestLogger(TEST_NAMES["catalog_functional_layers"], "TC_RM_CAT_GEN_004")
+    """RM_FVT_CATALOG_GENERATE_V004: Verify catalog has functional layers."""
+    tl = TestLogger(TEST_NAMES["catalog_functional_layers"], "RM_FVT_CATALOG_GENERATE_V004")
     result = check_catalog_functional_layers(host)
 
     if result["success"]:
@@ -111,8 +145,8 @@ def test_catalog_functional_layers(host):
 @pytest.mark.positive
 @pytest.mark.order(4)
 def test_catalog_groups(host):
-    """TC_RM_CAT_GEN_005: Verify catalog has groups."""
-    tl = TestLogger(TEST_NAMES["catalog_groups"], "TC_RM_CAT_GEN_005")
+    """RM_FVT_CATALOG_GENERATE_V005: Verify catalog has groups."""
+    tl = TestLogger(TEST_NAMES["catalog_groups"], "RM_FVT_CATALOG_GENERATE_V005")
     result = check_catalog_groups(host)
 
     if result["success"]:
@@ -127,8 +161,8 @@ def test_catalog_groups(host):
 @pytest.mark.positive
 @pytest.mark.order(5)
 def test_catalog_packages(host):
-    """TC_RM_CAT_GEN_006: Verify catalog has packages."""
-    tl = TestLogger(TEST_NAMES["catalog_packages"], "TC_RM_CAT_GEN_006")
+    """RM_FVT_CATALOG_GENERATE_V006: Verify catalog has packages."""
+    tl = TestLogger(TEST_NAMES["catalog_packages"], "RM_FVT_CATALOG_GENERATE_V006")
     result = check_catalog_packages(host)
 
     if result["success"]:
@@ -139,12 +173,13 @@ def test_catalog_packages(host):
     assert result["success"], ASSERT["catalog_must_have_packages"]
 
 
+@pytest.mark.deploy
 @pytest.mark.functional
 @pytest.mark.positive
 @pytest.mark.order(6)
 def test_catalog_log_file_exists(host):
-    """TC_RM_CAT_GEN_007: Verify catalog log file exists."""
-    tl = TestLogger(TEST_NAMES["catalog_log_file_exists"], "TC_RM_CAT_GEN_007")
+    """RM_FVT_CATALOG_GENERATE_V007: Verify catalog log file exists."""
+    tl = TestLogger(TEST_NAMES["catalog_log_file_exists"], "RM_FVT_CATALOG_GENERATE_V007")
     result = check_catalog_log_file_exists(host)
 
     if result["success"]:
