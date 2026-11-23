@@ -30,6 +30,7 @@ from omnia_auto import TestLogger
 from . import run_func, svt_report_func, track_func
 from .config_func import load_svt_config
 from .fvt_func import describe_step, run_fvt_step, step_info
+from .pxe_publish_func import LOCAL_DOMAIN, run_local_step
 from ..messages.svt_msgs import SETUP_MSGS, TEST_ASSERT_MSGS, TEST_LOG_MSGS
 from ..vars.common_vars import REPORT_SECTION_ENV
 from ..vars.test_case_vars import TEST_CASES
@@ -97,7 +98,8 @@ def run_svt_test(theme: str, name: str) -> None:
             "command": label, "fvt": step_info(tc["step"])}))
         pytest.skip(reason)
     logger = TestLogger(tc["title"], tc["id"])
-    result = run_fvt_step(tc["step"])
+    run = run_local_step if tc["step"][0] == LOCAL_DOMAIN else run_fvt_step
+    result = run(tc["step"])
     _report(theme, svt_report_func.make_item({
         "id": tc["id"], "name": tc["title"], "status": "Passed" if result["success"] else "Failed",
         "duration": result["duration"], "command": label, "output": result["output"],

@@ -25,6 +25,17 @@ test of the stage failed.
 _BS = "build_stream"
 
 TEST_CASES = {
+    # ---------------------------------------- stage prepare_build_stream
+    # When use_discovery_mapping=true in the theme's test_config, the
+    # orchestrator's pxe_mapping_file.csv is replaced with the latest
+    # timestamped bmc_pxe_mapping_file_<ts>.csv from the discovery output.
+    # When use_discovery_mapping=false (default), this test is a no-op.
+    "build_stream_use_discovery_mapping": {
+        "id": "SVT_BUILD_STREAM_017", "order": 1005, "stage": "prepare_build_stream",
+        "title": "Discovery mapping: copy the latest discovery PXE mapping to orchestrator "
+                 "input (use_discovery_mapping=true) or skip (use_discovery_mapping=false)",
+        "step": ("svt", ("pxe_use_discovery_mapping",)),
+    },
     # ---------------------------------------------- stage prepare_build_stream
     "build_stream_prepare_base_exec": {
         "id": "SVT_BUILD_STREAM_004", "order": 1010, "stage": "prepare_build_stream",
@@ -100,5 +111,50 @@ TEST_CASES = {
         "id": "SVT_BUILD_STREAM_016", "order": 1050, "stage": "automatic_cleanup",
         "title": "Automatic cleanup of the cadence image (S3, registry, NFS)",
         "step": (_BS, ("execute", "verify", "--suite", "auto_cleanup")),
+    },
+    # ------------------------------------------- theme discovery, stage node_lifecycle
+    # When use_discovery_mapping=true, the orchestrator's pxe_mapping_file.csv
+    # is replaced with the latest timestamped bmc_pxe_mapping_file_<ts>.csv
+    # from the discovery output. When use_discovery_mapping=false (default),
+    # this is a no-op.
+    "discovery_use_discovery_mapping": {
+        "id": "SVT_DISCOVERY_007", "order": 1055, "stage": "node_lifecycle",
+        "title": "Discovery mapping: copy the latest discovery PXE mapping to orchestrator "
+                 "input (use_discovery_mapping=true) or skip (use_discovery_mapping=false)",
+        "step": ("svt", ("pxe_use_discovery_mapping",)),
+    },
+    # Full discovery run, then the mapping the orchestrator reads is republished
+    # without one node (delete), and a full rerun restores it (add). "svt" steps run
+    # locally (pxe_publish_func.py); the others run the discovery FVT.
+    "discovery_full_run_exec": {
+        "id": "SVT_DISCOVERY_001", "order": 1060, "stage": "node_lifecycle",
+        "title": "Discovery: discovery.yml full run (OME devices into the PXE mapping)",
+        "step": ("discovery", ("discovery", "exec")),
+    },
+    "discovery_output_verify": {
+        "id": "SVT_DISCOVERY_002", "order": 1061, "stage": "node_lifecycle",
+        "title": "Discovery: PXE mapping output verification",
+        "step": ("discovery", ("execute", "verify", "--suite", "output")),
+    },
+    "discovery_delete_node": {
+        "id": "SVT_DISCOVERY_003", "order": 1062, "stage": "node_lifecycle",
+        "title": "Delete node: publish the mapping without the last slurm_node_rhel_10_2_x86_64 "
+                 "row, symlink to it",
+        "step": ("svt", ("pxe_remove_last_node", "slurm_node_rhel_10_2_x86_64")),
+    },
+    "discovery_delete_node_verify": {
+        "id": "SVT_DISCOVERY_004", "order": 1063, "stage": "node_lifecycle",
+        "title": "Delete node: PXE mapping output verification after the removal",
+        "step": ("discovery", ("execute", "verify", "--suite", "output")),
+    },
+    "discovery_add_node_exec": {
+        "id": "SVT_DISCOVERY_005", "order": 1064, "stage": "node_lifecycle",
+        "title": "Add node: discovery.yml rerun (the node is discovered and mapped again)",
+        "step": ("discovery", ("discovery", "exec")),
+    },
+    "discovery_add_node_verify": {
+        "id": "SVT_DISCOVERY_006", "order": 1065, "stage": "node_lifecycle",
+        "title": "Add node: symlink follows the newest mapping, the group has its row",
+        "step": ("svt", ("pxe_check_group", "slurm_node_rhel_10_2_x86_64")),
     },
 }

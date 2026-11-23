@@ -181,6 +181,28 @@ THEMES: Dict[str, Dict] = {
             "debug_mode": ("build_stream", "", "debug_mode", "bool"),
         },
     },
+    "discovery": {
+        "title": "Discovery Node Lifecycle",
+        "description": "Discovery: OME devices into the PXE mapping the orchestrator reads; "
+                       "delete and add a node",
+        "profile": "discovery",
+        # Only discovery's own cleanup: the whole-OIM cleanup (main) is not part of this theme.
+        "cleanup_steps": (("discovery", ("cleanup", "test")),),
+        "nfs_shares": {},
+        "fvt_domains": ("discovery",),
+        # The OME credentials are stored by test/discovery ./setup_env.sh --set-domain-creds.
+        "credential_domains": (),
+        "creds_suite": "discovery",
+        "cleanup_requires": {},
+        "stages": ("node_lifecycle",),
+        "stage_info": {
+            "node_lifecycle": (
+                "Node Lifecycle",
+                "Discovery run, PXE mapping verified, one node removed from the published "
+                "mapping, then a rerun restores it"),
+        },
+        "fvt_settings": {},
+    },
 }
 # Sections every theme has (title, description); the theme stages come from
 # THEMES[theme]["stage_info"]. In the report, cleanup and install (run by

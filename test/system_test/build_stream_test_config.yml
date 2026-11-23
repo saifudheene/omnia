@@ -26,6 +26,18 @@
 # =============================================================================
 
 # =============================================================================
+# DISCOVERY MAPPING  (SVT only: not written into any suite)
+# =============================================================================
+# use_discovery_mapping: true | false (default: false).
+#   true:  use the latest timestamped bmc_pxe_mapping_file_<ts>.csv from the
+#          discovery output (OMNIA_DATA_PATH/discovery/output/<project>/) as
+#          the orchestrator's pxe_mapping_file.csv, replacing the static file
+#          that the dataset generator wrote from user_inputs.yml.
+#   false: keep the existing pxe_mapping_file.csv in the orchestrator input
+#          (the one the dataset generator wrote from user_inputs.yml).
+use_discovery_mapping: false
+
+# =============================================================================
 # BUILD_STREAM  (written into test/build_stream/test_config.yml)
 # =============================================================================
 build_stream:

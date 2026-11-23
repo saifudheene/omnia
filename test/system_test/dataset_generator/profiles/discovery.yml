@@ -1,0 +1,37 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+# ==============================================================================
+# Profile: discovery
+# ==============================================================================
+# Inputs of the discovery node lifecycle system test: the OME address of
+# discovery_config.yml (user_inputs.yml discovery block). The credentials are not
+# written here: test/discovery ./setup_env.sh --set-domain-creds stores them.
+# See build_stream.yml for the keys of this file.
+# ==============================================================================
+name: discovery
+description: >-
+  Inputs of the discovery system test: discovery_config.yml (OME address).
+
+targets:
+  - section: discovery.discovery_config
+    file: src/discovery/input/discovery_config.yml
+    format: yaml
+    out: discovery/input/discovery_config.yml
+
+input_dirs:
+  - src/discovery/input
+
+mandatory:
+  - discovery.discovery_config.ome_ip
